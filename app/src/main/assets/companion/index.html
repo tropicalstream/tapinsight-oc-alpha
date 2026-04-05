@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AITap Setup</title>
+<title>TapInsight Setup</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e0e0e0;padding:16px;max-width:640px;margin:0 auto}
@@ -34,6 +34,10 @@
   .btn-reset{background:#333;color:#ccc}
   .status{text-align:center;font-size:13px;margin-top:10px;min-height:20px}
   .status.ok{color:#4caf50}.status.err{color:#f44336}
+  .toast{position:fixed;top:20px;left:50%;transform:translateX(-50%) translateY(-80px);padding:14px 28px;border-radius:10px;font-size:14px;font-weight:600;z-index:200;opacity:0;transition:transform .4s ease,opacity .4s ease;pointer-events:none;box-shadow:0 4px 20px rgba(0,0,0,.5);max-width:90%}
+  .toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+  .toast.ok{background:#1b5e20;color:#a5d6a7;border:1px solid #4caf50}
+  .toast.err{background:#b71c1c;color:#ef9a9a;border:1px solid #f44336}
   .pw-wrap{position:relative}
   .pw-toggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:11px;color:#00e5ff;cursor:pointer;background:none;border:none}
   .modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.85);z-index:100;padding:20px;overflow-y:auto}
@@ -47,11 +51,15 @@
   .feature-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
   .feature{background:#111;border-radius:6px;padding:8px 10px;font-size:11px;color:#aaa;border:1px solid #222}
   .feature b{color:#fff;display:block;margin-bottom:2px}
+  .server-card{background:#111;border:1px solid #2d3d4a;border-radius:10px;padding:12px 14px;margin:0 0 16px 0;line-height:1.7}
+  .server-card .title{font-size:12px;color:#8fdfff;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+  .server-card .row{font-size:13px;color:#cfd8dc;margin-bottom:4px}
+  .server-card code{background:#0a0f14;padding:2px 6px;border-radius:4px;color:#9ef3ff;font-size:12px;word-break:break-all}
 </style>
 </head>
 <body>
 
-<h1>AITap Setup Guide</h1>
+<h1>TapInsight Setup Guide</h1>
 <p class="sub">RayNeo X3 Pro &mdash; Follow each step in order</p>
 
 <div style="display:flex;gap:0;margin-bottom:20px;border-radius:8px;overflow:hidden;border:1px solid #333">
@@ -59,6 +67,16 @@
   <a href="/browser" style="flex:1;padding:10px;text-align:center;text-decoration:none;font-size:13px;font-weight:600;color:#aaa;background:#1a1a1a">Browser</a>
   <a href="/dashboard" style="flex:1;padding:10px;text-align:center;text-decoration:none;font-size:13px;font-weight:600;color:#aaa;background:#1a1a1a">Dashboard</a>
   <a href="/radio" style="flex:1;padding:10px;text-align:center;text-decoration:none;font-size:13px;font-weight:600;color:#aaa;background:#1a1a1a">TapRadio</a>
+  <a href="/openclaw" style="flex:1;padding:10px;text-align:center;text-decoration:none;font-size:13px;font-weight:600;color:#aaa;background:#1a1a1a">OpenClaw</a>
+</div>
+
+<div class="server-card" id="serverInfoCard">
+  <div class="title">Connection Info</div>
+  <div class="row" id="serverInfoStatus">Detecting current companion connection...</div>
+  <div class="row" id="serverInfoCurrent"></div>
+  <div class="row" id="serverInfoLan"></div>
+  <div class="row" id="serverInfoPhone"></div>
+  <div class="row" id="serverInfoUsb"></div>
 </div>
 
 <!-- Step 1: Google Cloud Project -->
@@ -89,7 +107,36 @@
 
   <label>Model Override <button class="help-btn" onclick="showHelp('model')">?</button></label>
   <input type="text" id="geminiModel" placeholder="Leave blank for default">
-  <div class="hint">Default: gemini-2.5-flash-native-audio. Only change if you know what you're doing.</div>
+  <div class="hint">Default Live model: gemini-3.1-flash-live-preview. Only change this if you know what you're doing.</div>
+
+  <label>Research Provider <button class="help-btn" onclick="showHelp('research')">?</button></label>
+  <select id="researchProvider">
+    <option value="gemini">Gemini</option>
+    <option value="openai_codex">OpenAI Codex</option>
+    <option value="groq">Groq</option>
+  </select>
+  <div class="hint">Used only for explicit deep-dive requests like "research fusion power" or "analyze this topic". It does not replace your normal assistant.</div>
+
+  <label>Research API Key</label>
+  <div class="pw-wrap">
+    <input type="password" id="researchApiKey" placeholder="Provider-specific API key">
+    <button class="pw-toggle" onclick="togglePw('researchApiKey')">show</button>
+  </div>
+
+  <label>Research Model</label>
+  <input type="text" id="researchModel" placeholder="Examples: gemini-3.1-pro-preview, gpt-5.2-codex, llama-3.3-70b-versatile">
+  <div class="hint">Leave blank to use the built-in default. Pick a fast model for quick reading or a stronger model for longer, denser analysis.</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+    <button type="button" style="background:#37474f;color:#fff;flex:none;padding:8px 12px;font-size:13px;border-radius:6px;border:none;cursor:pointer" onclick="applyResearchPreset('fast')">Fast</button>
+    <button type="button" style="background:#455a64;color:#fff;flex:none;padding:8px 12px;font-size:13px;border-radius:6px;border:none;cursor:pointer" onclick="applyResearchPreset('balanced')">Balanced</button>
+    <button type="button" style="background:#546e7a;color:#fff;flex:none;padding:8px 12px;font-size:13px;border-radius:6px;border:none;cursor:pointer" onclick="applyResearchPreset('deep')">Deep</button>
+    <button type="button" style="background:#263238;color:#fff;flex:none;padding:8px 12px;font-size:13px;border-radius:6px;border:none;cursor:pointer" onclick="clearResearchModel()">Use Default</button>
+  </div>
+  <div class="hint" id="researchPresetHint">Provider-aware presets fill this field with recommended models.</div>
+
+  <label>LearnLM Tutor Model <button class="help-btn" onclick="showHelp('learnlm')">?</button></label>
+  <input type="text" id="learnLmModel" placeholder="Optional: LearnLM model ID (default: learnlm-2.0-flash-experimental)">
+  <div class="hint">Used only when the user explicitly says <code>learnlm</code> first, for example <code>learnlm explain matrices</code>. This reuses your Gemini API key and falls back to gemini-3.1-pro-preview if the LearnLM model is unavailable.</div>
 </div>
 
 <!-- Step 3: OAuth Consent Screen -->
@@ -99,7 +146,7 @@
     <div class="step-title">Google OAuth (Workspace Access)</div>
     <button class="help-btn" onclick="showHelp('oauth')">?</button>
   </div>
-  <p class="step-desc">Enables access to your Calendar, Keep, Contacts, and Tasks. Create a <b>Desktop application</b> OAuth client in your GCP project.</p>
+  <p class="step-desc">Connects your Google account so TapInsight can read your Calendar, Keep notes, Contacts, and Tasks. You'll need a Google Cloud project with an OAuth client &mdash; tap the <b>?</b> button for a step-by-step walkthrough.</p>
   <label>Google OAuth Client ID</label>
   <input type="text" id="googleOAuthClientId" placeholder="xxxx.apps.googleusercontent.com">
   <label>Google OAuth Client Secret</label>
@@ -110,14 +157,49 @@
   <a class="link" href="https://console.cloud.google.com/apis/credentials" target="_blank">GCP Credentials page &rarr;</a>
   <div class="hint">Enable these APIs: Calendar, Keep, People (Contacts), Tasks</div>
   <div style="margin-top:12px">
-    <button style="background:#4285F4;color:#fff;flex:none;padding:10px 20px;font-size:13px" onclick="authorizeGoogle()">Authorize with Google</button>
+    <button style="background:#4285F4;color:#fff;flex:none;padding:10px 20px;font-size:13px" onclick="startOAuthFlow()">Authorize with Google</button>
     <span id="oauthStatus" style="font-size:12px;margin-left:10px;color:#999">Checking...</span>
   </div>
-  <div id="codeEntrySection" style="display:none;margin-top:12px;padding:12px;background:#111;border-radius:8px;border:1px solid #333">
-    <p style="font-size:12px;color:#ff9800;margin-bottom:8px">After authorizing, Google will redirect to a page that says "can't connect" &mdash; that's normal! <b>Copy the entire URL</b> from that tab's address bar and paste it below:</p>
-    <input type="text" id="oauthCodeInput" placeholder="Paste the full URL from the address bar" style="margin-bottom:8px">
-    <button style="background:#4caf50;color:#fff;flex:none;padding:8px 16px;font-size:13px" onclick="submitOAuthCode()">Submit Code</button>
-    <span id="codeSubmitStatus" style="font-size:12px;margin-left:8px;color:#999"></span>
+
+  <!-- Step-by-step OAuth flow panel -->
+  <div id="oauthFlowPanel" style="display:none;margin-top:12px;padding:16px;background:#0a1118;border-radius:10px;border:1px solid #1a3a4a">
+
+    <!-- Step 1: Sign in -->
+    <div id="oauthStep1" style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="background:#4285F4;color:#fff;border-radius:50%;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0">1</span>
+        <span style="font-size:14px;font-weight:600;color:#fff">Sign in with Google</span>
+      </div>
+      <p style="font-size:12px;color:#aaa;margin:0 0 10px 32px;line-height:1.5">A new tab will open where you'll sign in to your Google account and grant permission. After you approve, the tab will show an error page &mdash; <b style="color:#00e5ff">this is completely normal and expected!</b></p>
+      <div style="margin-left:32px">
+        <button style="background:#4285F4;color:#fff;flex:none;padding:8px 18px;font-size:13px;border-radius:6px" onclick="authorizeGoogle()">Open Google Sign-In</button>
+      </div>
+    </div>
+
+    <!-- Step 2: Copy URL -->
+    <div id="oauthStep2" style="margin-bottom:14px;opacity:0.4" >
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="background:#ff9800;color:#fff;border-radius:50%;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0">2</span>
+        <span style="font-size:14px;font-weight:600;color:#fff">Copy the URL from the error page</span>
+      </div>
+      <p style="font-size:12px;color:#aaa;margin:0 0 6px 32px;line-height:1.5">On the error page, tap the <b style="color:#fff">address bar</b> at the top of the tab. Select and copy the <b style="color:#fff">entire URL</b>. It will look something like:</p>
+      <div style="margin:0 0 6px 32px;background:#0a0f14;padding:8px 10px;border-radius:6px;font-size:11px;color:#9ef3ff;word-break:break-all;border:1px solid #1a2a34">http://localhost:19110/oauth/callback?code=4/0Axx...&amp;scope=...</div>
+    </div>
+
+    <!-- Step 3: Paste -->
+    <div id="oauthStep3" style="opacity:0.4">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="background:#4caf50;color:#fff;border-radius:50%;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0">3</span>
+        <span style="font-size:14px;font-weight:600;color:#fff">Paste it here to finish</span>
+      </div>
+      <div style="margin-left:32px">
+        <input type="text" id="oauthCodeInput" placeholder="Paste the full URL here" style="margin-bottom:8px;font-size:13px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <button style="background:#4caf50;color:#fff;flex:none;padding:8px 18px;font-size:13px;border-radius:6px" onclick="submitOAuthCode()">Complete Authorization</button>
+          <span id="codeSubmitStatus" style="font-size:12px;color:#999"></span>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -152,12 +234,36 @@
     <input type="password" id="googleMapsApiKey" placeholder="AIza...">
     <button class="pw-toggle" onclick="togglePw('googleMapsApiKey')">show</button>
   </div>
-  <div class="hint" style="margin-top:6px">Enable these 3 APIs in your GCP project:</div>
+  <div class="hint" style="margin-top:6px">Enable these 4 APIs in your GCP project:</div>
   <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+    <a class="link" href="https://console.cloud.google.com/apis/library/maps-backend.googleapis.com" target="_blank" style="background:#222;padding:4px 10px;border-radius:4px;font-size:11px">Enable Maps JavaScript API &rarr;</a>
     <a class="link" href="https://console.cloud.google.com/apis/library/directions-backend.googleapis.com" target="_blank" style="background:#222;padding:4px 10px;border-radius:4px;font-size:11px">Enable Directions API &rarr;</a>
     <a class="link" href="https://console.cloud.google.com/apis/library/routes.googleapis.com" target="_blank" style="background:#222;padding:4px 10px;border-radius:4px;font-size:11px">Enable Routes API &rarr;</a>
     <a class="link" href="https://console.cloud.google.com/apis/library/places-backend.googleapis.com" target="_blank" style="background:#222;padding:4px 10px;border-radius:4px;font-size:11px">Enable Places API &rarr;</a>
   </div>
+</div>
+
+<!-- Optional Module: Phone GPS Bridge -->
+<div class="step" id="phoneLocationBridgeSection">
+  <div class="step-head">
+    <div class="step-num" style="background:#66bb6a;color:#000">+</div>
+    <div class="step-title">Phone GPS Bridge (Optional Module)</div>
+    <button class="help-btn" onclick="showHelp('phonegps')">?</button>
+  </div>
+  <p class="step-desc">Off by default. When enabled from a phone, TapInsight can use this phone's GPS as a high-accuracy location source for maps and nearby-place queries. If left off, the glasses keep using the existing location pipeline unchanged.</p>
+  <p id="gpsBridgeSecurityNotice" class="step-desc" style="font-size:12px"></p>
+  <label>Phone GPS Bridge</label>
+  <select id="phoneLocationBridgeEnabled" onchange="handlePhoneLocationBridgeModeChange()" style="border:2px solid #00e5ff;background:#081318;color:#fff;font-weight:700;font-size:15px;padding:10px 14px;border-radius:8px;box-shadow:0 0 8px rgba(0,229,255,.25),0 0 0 1px rgba(0,229,255,.15) inset;-webkit-appearance:none;appearance:none;width:100%;max-width:320px">
+    <option value="false">Off (default)</option>
+    <option value="true">On — Share This Phone's GPS</option>
+  </select>
+  <div class="hint">Step 1: turn this module on. Step 2: tap <b>Use This Phone's GPS</b> to request permission and send the first fix. This only affects maps/location flows while the module is enabled and receiving fresh phone fixes.</div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">
+    <button style="background:#1a73e8;color:#fff;flex:none;padding:8px 14px;font-size:13px;border-radius:6px;border:none;cursor:pointer" onclick="enablePhoneLocationBridge()">Use This Phone's GPS</button>
+    <button style="background:#555;color:#fff;flex:none;padding:8px 14px;font-size:13px;border-radius:6px;border:none;cursor:pointer" onclick="refreshPhoneLocationBridgeStatus()">Refresh Status</button>
+    <button style="background:#8e24aa;color:#fff;flex:none;padding:8px 14px;font-size:13px;border-radius:6px;border:none;cursor:pointer" onclick="disablePhoneLocationBridge()">Stop Phone GPS</button>
+  </div>
+  <div id="phoneLocationBridgeStatus" style="margin-top:12px;padding:10px;background:#111;border-radius:6px;border:1px solid #333;font-size:12px;color:#aaa;line-height:1.8">Phone GPS bridge is off.</div>
 </div>
 
 <!-- Step 6: Spotify -->
@@ -194,9 +300,9 @@
     <div class="step-title">Personality &amp; Behavior</div>
     <button class="help-btn" onclick="showHelp('personality')">?</button>
   </div>
-  <p class="step-desc">Customize how AITap speaks and behaves.</p>
+  <p class="step-desc">Customize how TapInsight speaks and behaves.</p>
   <label>Personality</label>
-  <textarea id="personality" placeholder="e.g. You are friendly and concise. Use casual language. Be proactive about suggesting things you see through the camera."></textarea>
+  <textarea id="personality" placeholder="Describe your assistant's personality and voice style. This also tweaks how the selected voice sounds.&#10;&#10;Examples:&#10;• You are friendly and concise. Use casual language.&#10;• Speak calmly with a warm, reassuring tone. Pause briefly before key points.&#10;• Be energetic and enthusiastic. Use short punchy sentences.&#10;• Speak slowly and clearly, like a patient teacher.&#10;• Use a professional, composed tone. Avoid filler words.&#10;• Be playful and witty. Add light humor when appropriate."></textarea>
 
   <hr style="border-color:#333;margin:14px 0">
   <div style="cursor:pointer;color:#00e5ff;font-size:14px;font-weight:600;margin-bottom:8px" onclick="document.getElementById('promptSections').style.display=document.getElementById('promptSections').style.display==='none'?'block':'none'">
@@ -206,15 +312,15 @@
     <div class="hint" style="margin-bottom:10px">Edit individual sections of the AI system prompt. Leave blank to use defaults. Changes take effect on next voice session.</div>
 
     <label>Identity</label>
-    <textarea id="promptIdentity" rows="3" placeholder="You are AITap, a proactive AI assistant integrated into RayNeo X3 AR glasses. You can see through the user's camera and hear their voice in real-time."></textarea>
-    <div class="hint">Who is AITap and what can it perceive.</div>
+    <textarea id="promptIdentity" rows="3" placeholder="You are TapInsight, a proactive AI assistant integrated into RayNeo X3 AR glasses. You can see through the user's camera and hear their voice in real-time."></textarea>
+    <div class="hint">Who is TapInsight and what can it perceive.</div>
 
     <label>Tool Routing Rules</label>
-    <textarea id="promptRoutingRules" rows="5" placeholder="TOOL ROUTING RULES: 1) For calendar questions, always call google_calendar. 2) For reminders/notes, call google_keep. 3) For directions, call google_routes. ..."></textarea>
+    <textarea id="promptRoutingRules" rows="5" placeholder="TOOL ROUTING RULES: 1) Calendar → google_calendar. 2) Directions/traffic/ETA → google_routes. 3) Nearby places/open-now queries → google_places. If the closest place is closed, promote a different nearby open option with ETA, weather, and Maps link. 4) Research/deep-dive queries → research_topic."></textarea>
     <div class="hint">Rules for which tools Gemini should call for different types of queries.</div>
 
     <label>Behavior &amp; Output</label>
-    <textarea id="promptBehavior" rows="5" placeholder="PROACTIVE BEHAVIOR: Offer to scan QR codes, read text aloud, guide assembly/cooking. HUD OUTPUT RULES: Keep responses to 1-6 lines. No stack traces or raw JSON."></textarea>
+    <textarea id="promptBehavior" rows="5" placeholder="PROACTIVE BEHAVIOR: Offer to scan QR codes, read text aloud, and use traffic/weather/location context when relevant. HUD OUTPUT RULES: Keep responses to 1-6 lines. Never repeat the user's transcript. No stack traces, raw JSON, or diagnostics."></textarea>
     <div class="hint">Proactive behavior, HUD formatting, and privacy rules.</div>
 
     <label>URL Rules</label>
@@ -238,6 +344,324 @@
   <input type="text" id="ttsVolume" placeholder="0.80">
   <label>TTS Muted</label>
   <select id="ttsMuted"><option value="false">No</option><option value="true">Yes</option></select>
+
+  <hr style="border-color:#333;margin:14px 0">
+  <div style="font-size:13px;color:#888;font-weight:600;margin-bottom:8px">Media Player (Text Reader)</div>
+
+  <div style="background:#1a2733;border:1px solid #2a4a5a;border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:12.5px;line-height:1.6;color:#b0c4d8">
+    <strong style="color:#4fc3f7">Setup: Enable Google Cloud TTS</strong><br>
+    1. Go to <a href="https://console.cloud.google.com/apis/library/texttospeech.googleapis.com" target="_blank" style="color:#4fc3f7">Cloud Text-to-Speech API</a> and click <strong>Enable</strong><br>
+    2. Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:#4fc3f7">APIs &amp; Credentials</a> &rarr; Create Credentials &rarr; API Key<br>
+    3. Paste the key below
+  </div>
+
+  <label>Google Cloud TTS API Key</label>
+  <div class="pw-wrap">
+    <input type="password" id="cloudTtsApiKey" placeholder="AIza...">
+    <button class="pw-toggle" onclick="togglePw('cloudTtsApiKey')">show</button>
+  </div>
+  <div class="hint">If you get a 403 error, make sure the Cloud Text-to-Speech API is enabled in your Google Cloud project.</div>
+
+  <label>TTS Voice</label>
+  <select id="cloudTtsVoiceName">
+    <optgroup label="Standard (~$4/1M chars)">
+      <option value="en-US-Standard-A">en-US-Standard-A (M)</option>
+      <option value="en-US-Standard-B">en-US-Standard-B (M)</option>
+      <option value="en-US-Standard-C">en-US-Standard-C (F)</option>
+      <option value="en-US-Standard-D">en-US-Standard-D (M)</option>
+      <option value="en-US-Standard-E">en-US-Standard-E (F)</option>
+      <option value="en-US-Standard-F">en-US-Standard-F (F)</option>
+      <option value="en-US-Standard-G">en-US-Standard-G (F)</option>
+      <option value="en-US-Standard-H">en-US-Standard-H (F)</option>
+      <option value="en-US-Standard-I">en-US-Standard-I (M)</option>
+      <option value="en-US-Standard-J">en-US-Standard-J (M)</option>
+    </optgroup>
+    <optgroup label="WaveNet (~$16/1M chars)">
+      <option value="en-US-Wavenet-A">en-US-Wavenet-A (M)</option>
+      <option value="en-US-Wavenet-B">en-US-Wavenet-B (M)</option>
+      <option value="en-US-Wavenet-C">en-US-Wavenet-C (F)</option>
+      <option value="en-US-Wavenet-D">en-US-Wavenet-D (M)</option>
+      <option value="en-US-Wavenet-E">en-US-Wavenet-E (F)</option>
+      <option value="en-US-Wavenet-F">en-US-Wavenet-F (F)</option>
+      <option value="en-US-Wavenet-G">en-US-Wavenet-G (F)</option>
+      <option value="en-US-Wavenet-H">en-US-Wavenet-H (F)</option>
+      <option value="en-US-Wavenet-I">en-US-Wavenet-I (M)</option>
+      <option value="en-US-Wavenet-J">en-US-Wavenet-J (M)</option>
+    </optgroup>
+    <optgroup label="Neural2 (~$16/1M chars)">
+      <option value="en-US-Neural2-A">en-US-Neural2-A (M)</option>
+      <option value="en-US-Neural2-C">en-US-Neural2-C (F)</option>
+      <option value="en-US-Neural2-D">en-US-Neural2-D (M)</option>
+      <option value="en-US-Neural2-E">en-US-Neural2-E (F)</option>
+      <option value="en-US-Neural2-F">en-US-Neural2-F (F)</option>
+      <option value="en-US-Neural2-G">en-US-Neural2-G (F)</option>
+      <option value="en-US-Neural2-H">en-US-Neural2-H (F)</option>
+      <option value="en-US-Neural2-I">en-US-Neural2-I (M)</option>
+      <option value="en-US-Neural2-J">en-US-Neural2-J (M)</option>
+    </optgroup>
+    <optgroup label="Studio (~$160/1M chars)">
+      <option value="en-US-Studio-M">en-US-Studio-M (M)</option>
+      <option value="en-US-Studio-O">en-US-Studio-O (F)</option>
+      <option value="en-US-Studio-Q">en-US-Studio-Q (M)</option>
+    </optgroup>
+  </select>
+  <div class="hint">Select a voice. (M) = Male, (F) = Female. Standard is cheapest, Neural2/WaveNet sound more natural.</div>
+
+  <label>TTS Language</label>
+  <input type="text" id="cloudTtsLanguage" placeholder="en-US" value="en-US">
+  <div class="hint">Language code (e.g. en-US, en-GB, es-ES, fr-FR).</div>
+
+</div>
+
+<!-- Step 8b: Gemini Live Voice & AI -->
+<div class="step" id="s8b">
+  <div class="step-head">
+    <div class="step-num" style="background:#7c4dff;color:#fff">AI</div>
+    <div class="step-title">Gemini Live Voice &amp; AI</div>
+    <button class="help-btn" onclick="showHelp('liveai')">?</button>
+  </div>
+  <p class="step-desc">Configure the Gemini 3.1 Flash Live voice assistant: voice, thinking depth, language, and advanced session features.</p>
+
+  <label>Live Voice (Gemini Live sessions)</label>
+  <select id="liveVoiceName">
+    <option value="">Default (Puck)</option>
+    <option value="Puck">Puck (M) &mdash; Conversational, friendly, upbeat</option>
+    <option value="Charon">Charon (M) &mdash; Deep, authoritative, confident</option>
+    <option value="Kore">Kore (F) &mdash; Neutral, professional, clear</option>
+    <option value="Fenrir">Fenrir (M) &mdash; Warm, approachable, steady</option>
+    <option value="Aoede">Aoede (F) &mdash; Bright, articulate, expressive</option>
+    <option value="Leda">Leda (F) &mdash; Gentle, calm, reassuring</option>
+    <option value="Orus">Orus (M) &mdash; Firm, direct, matter-of-fact</option>
+    <option value="Zephyr">Zephyr (F) &mdash; Light, airy, relaxed</option>
+  </select>
+  <div class="hint">The base voice for real-time voice sessions. These 8 voices are available on Gemini Live. Tweak the voice style in the <b>Personality</b> field (Step 7).</div>
+
+  <label>TTS Voice (text-to-speech responses)</label>
+  <select id="ttsVoiceName">
+    <option value="">Same as Live voice</option>
+    <option value="Puck">Puck (M) &mdash; Conversational, friendly, upbeat</option>
+    <option value="Charon">Charon (M) &mdash; Deep, authoritative, confident</option>
+    <option value="Kore">Kore (F) &mdash; Neutral, professional, clear</option>
+    <option value="Fenrir">Fenrir (M) &mdash; Warm, approachable, steady</option>
+    <option value="Aoede">Aoede (F) &mdash; Bright, articulate, expressive</option>
+    <option value="Leda">Leda (F) &mdash; Gentle, calm, reassuring</option>
+    <option value="Orus">Orus (M) &mdash; Firm, direct, matter-of-fact</option>
+    <option value="Zephyr">Zephyr (F) &mdash; Light, airy, relaxed</option>
+    <option value="Achernar">Achernar (F) &mdash; Soft, gentle, soothing</option>
+    <option value="Achird">Achird (M) &mdash; Balanced, even-toned</option>
+    <option value="Algenib">Algenib (M) &mdash; Gravelly, textured, rugged</option>
+    <option value="Algieba">Algieba (M) &mdash; Smooth, polished, refined</option>
+    <option value="Alnilam">Alnilam (M) &mdash; Clear, resonant, composed</option>
+    <option value="Autonoe">Autonoe (F) &mdash; Poised, elegant, measured</option>
+    <option value="Callirhoe">Callirhoe (F) &mdash; Melodic, flowing, lyrical</option>
+    <option value="Despina">Despina (F) &mdash; Crisp, precise, articulate</option>
+    <option value="Enceladus">Enceladus (M) &mdash; Rich, full-bodied, grounded</option>
+    <option value="Erinome">Erinome (F) &mdash; Soft-spoken, intimate, warm</option>
+    <option value="Gacrux">Gacrux (F) &mdash; Mature, experienced, wise</option>
+    <option value="Iapetus">Iapetus (M) &mdash; Steady, reliable, trustworthy</option>
+    <option value="Laomedeia">Laomedeia (F) &mdash; Graceful, serene, thoughtful</option>
+    <option value="Pulcherrima">Pulcherrima (F) &mdash; Vibrant, dynamic, engaging</option>
+    <option value="Rasalgethi">Rasalgethi (M) &mdash; Strong, commanding, bold</option>
+    <option value="Sadachbia">Sadachbia (M) &mdash; Cheerful, optimistic, lively</option>
+    <option value="Sadaltager">Sadaltager (M) &mdash; Calm, patient, deliberate</option>
+    <option value="Schedar">Schedar (M) &mdash; Stately, dignified, formal</option>
+    <option value="Sulafat">Sulafat (M) &mdash; Warm, welcoming, inviting</option>
+    <option value="Umbriel">Umbriel (M) &mdash; Quiet, understated, subtle</option>
+    <option value="Vindemiatrix">Vindemiatrix (F) &mdash; Gentle, kind, nurturing</option>
+    <option value="Zubenelgenubi">Zubenelgenubi (M) &mdash; Distinctive, unique, memorable</option>
+  </select>
+  <div class="hint">Voice for non-live TTS responses. All 30 Gemini voices available. Leave blank to match the Live voice. Preview in <a class="link" href="https://aistudio.google.com" target="_blank">Google AI Studio</a>.</div>
+
+  <label>Language</label>
+  <input type="text" id="liveLanguageCode" placeholder="Auto-detect (leave blank) or e.g. en-US, es-ES, ja-JP">
+  <div class="hint">BCP-47 language code. Leave blank to auto-detect from speech.</div>
+
+  <label>Thinking Level</label>
+  <select id="liveThinkingLevel">
+    <option value="">Minimal (fastest, default)</option>
+    <option value="low">Low</option>
+    <option value="medium">Medium</option>
+    <option value="high">High (most thoughtful, higher latency)</option>
+  </select>
+  <div class="hint">Higher thinking = more reasoning before responding, but adds latency. Minimal is recommended for real-time conversation.</div>
+
+  <label>Temperature (0.0 &ndash; 2.0)</label>
+  <input type="text" id="liveTemperature" placeholder="Leave blank for model default">
+  <div class="hint">Lower = more focused and deterministic. Higher = more creative and varied. Leave blank to use the model's default.</div>
+
+  <label>Interrupt Mode</label>
+  <input type="hidden" id="liveDisableInterrupt" value="false">
+  <div style="display:flex;gap:12px;margin:6px 0 10px">
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#ccc"><input type="radio" name="liveInterruptMode" value="auto" checked onchange="toggleInterruptFields()"> Auto (adjustable)</label>
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#ccc"><input type="radio" name="liveInterruptMode" value="disabled" onchange="toggleInterruptFields()"> Never interrupt</label>
+  </div>
+  <div class="hint" style="margin-bottom:10px">When set to <b>Never interrupt</b>, Gemini will always finish speaking before listening. Background noise and ambient sound will be completely ignored. Useful for noisy environments like museums, concerts, or crowded streets.</div>
+
+  <div id="interruptFields">
+  <label>Interrupt Sensitivity (0.6 &ndash; 2.5)</label>
+  <input type="text" id="liveBargeInSensitivity" placeholder="1.0">
+  <div class="hint">Controls how easily your voice interrupts Gemini while it is speaking. This affects both the on-device barge-in logic and the Gemini server-side voice detection.<br>
+    <b>Recommended levels:</b><br>
+    &bull; <b>0.6 &ndash; 1.0</b> &mdash; Quiet room, home office, library<br>
+    &bull; <b>1.0 &ndash; 1.5</b> &mdash; Normal indoor environment (default: 1.0)<br>
+    &bull; <b>1.5 &ndash; 2.0</b> &mdash; Busy office, caf&eacute;, light street noise<br>
+    &bull; <b>2.0 &ndash; 2.5</b> &mdash; Museum, airport, crowded venue, outdoor wind
+  </div>
+
+  <label>Silence Threshold (100 &ndash; 3000)</label>
+  <input type="text" id="liveSilenceThreshold" placeholder="600">
+  <div class="hint">Microphone audio below this level is treated as silence. Higher values filter out more background noise, preventing Gemini from being interrupted by ambient sounds. Measured in PCM16 peak amplitude.<br>
+    <b>Recommended levels:</b><br>
+    &bull; <b>100 &ndash; 300</b> &mdash; Very quiet room, recording studio<br>
+    &bull; <b>300 &ndash; 600</b> &mdash; Normal indoor environment<br>
+    &bull; <b>600 &ndash; 1200</b> &mdash; Busy indoor spaces, light street noise (default: 600)<br>
+    &bull; <b>1200 &ndash; 2000</b> &mdash; Museum, crowded venue, moderate outdoor noise<br>
+    &bull; <b>2000 &ndash; 3000</b> &mdash; Very noisy &mdash; only loud, close speech will register
+  </div>
+  </div><!-- /interruptFields -->
+
+  <hr style="border-color:#333;margin:12px 0">
+  <p class="step-desc" style="color:#7c4dff;font-weight:600;margin-bottom:8px">Session Features</p>
+
+  <label>Session Resumption</label>
+  <select id="liveSessionResumption"><option value="true">Enabled (recommended)</option><option value="false">Disabled</option></select>
+  <div class="hint">If the WebSocket briefly disconnects (e.g. network blip), the session can resume without losing context. Recommended on.</div>
+
+  <label>Context Window Compression</label>
+  <select id="liveContextCompression"><option value="false">Disabled</option><option value="true">Enabled</option></select>
+  <div class="hint">Automatically compresses older conversation turns to allow longer sessions without hitting the context limit.</div>
+
+  <label>Compression Target Tokens</label>
+  <input type="number" id="liveCompressionTokens" placeholder="0 (auto)" min="0" max="1000000">
+  <div class="hint">Token count that triggers compression. 0 or blank = let the model decide. Only applies when compression is enabled.</div>
+
+</div>
+
+<!-- Step 8c: Timeout Settings -->
+<div class="step" id="s8c">
+  <div class="step-head">
+    <div class="step-num" style="background:#ff6d00;color:#fff">T</div>
+    <div class="step-title">Model Timeouts</div>
+    <button class="help-btn" onclick="showHelp('timeouts')">?</button>
+  </div>
+  <p class="step-desc">Set custom timeouts for each AI model. Leave at 0 to use defaults. Increase if you experience timeouts on slower connections.</p>
+
+  <label>Gemini Live Idle Timeout (seconds)</label>
+  <input type="number" id="timeoutLiveIdleSeconds" placeholder="0 (default ~120s)" min="0" max="600">
+  <div class="hint">How long the Live voice session stays open without speech before auto-disconnecting. 0 = default (~2 minutes).</div>
+
+  <label>Standard Gemini Timeout (seconds)</label>
+  <input type="number" id="timeoutGeminiSeconds" placeholder="0 (default 45s)" min="0" max="300">
+  <div class="hint">HTTP timeout for standard Gemini text/audio API calls. 0 = default (45s).</div>
+
+  <label>Research Model Timeout (seconds)</label>
+  <input type="number" id="timeoutResearchSeconds" placeholder="0 (default 45s)" min="0" max="300">
+  <div class="hint">HTTP timeout for research deep-dive queries. Increase for longer research briefs. 0 = default (45s).</div>
+
+  <label>LearnLM Tutor Timeout (seconds)</label>
+  <input type="number" id="timeoutLearnLmSeconds" placeholder="0 (default 45s)" min="0" max="300">
+  <div class="hint">HTTP timeout for tutoring responses. 0 = default (45s).</div>
+</div>
+
+<!-- Step 8d: Accessibility -->
+<div class="step" id="s8d">
+  <div class="step-head">
+    <div class="step-num" style="background:#00c853;color:#000">A</div>
+    <div class="step-title">Accessibility</div>
+    <button class="help-btn" onclick="showHelp('accessibility')">?</button>
+  </div>
+  <p class="step-desc">Adjust display and speech settings for comfort and readability.</p>
+
+  <label>HUD Font Scale</label>
+  <input type="text" id="hudFontScale" placeholder="1.0 (normal)">
+  <div class="hint">Multiplier for HUD text size: 0.5 = half size, 1.0 = normal, 2.0 = double, up to 3.0. Useful for low vision.</div>
+
+  <label>High Contrast HUD</label>
+  <select id="hudHighContrast"><option value="false">Normal</option><option value="true">High Contrast</option></select>
+  <div class="hint">Uses brighter text with stronger outlines for improved readability in bright environments.</div>
+
+  <label>TTS Speech Rate</label>
+  <input type="text" id="ttsSpeechRate" placeholder="1.0 (normal)">
+  <div class="hint">Speed of text-to-speech output: 0.5 = slow, 1.0 = normal, 2.0 = fast, up to 4.0.</div>
+
+  <label>Auto-Read Responses</label>
+  <select id="ttsAutoRead"><option value="true">Yes (default)</option><option value="false">No</option></select>
+  <div class="hint">Automatically read all assistant responses aloud via TTS. Turn off to only hear voice session audio.</div>
+
+  <label>Default Assistant Mode</label>
+  <select id="assistantDefaultCamera"><option value="false">Audio Only (default)</option><option value="true">Camera + Audio</option></select>
+  <div class="hint">When you double-tap to start the assistant, this sets whether it starts with camera active or audio-only. Double-tap again to switch modes, and a third double-tap closes the session.</div>
+</div>
+
+<!-- TapClaw settings moved to OpenClaw tab → /openclaw -->
+
+<!-- Step 8f: Translation Settings -->
+<div class="step" id="s8f">
+  <div class="step-head">
+    <span class="step-num">8f</span> Translation
+    <button class="help-btn" onclick="showHelp('translation')">?</button>
+  </div>
+  <p class="step-desc">Real-time translation of speech and visible text (signs, menus, documents). Say <code>translate</code> followed by your request.</p>
+
+  <label>Default Target Language</label>
+  <select id="translateDefaultLanguage">
+    <option value="">Auto-detect / Ask me</option>
+    <option value="Spanish">Spanish</option>
+    <option value="French">French</option>
+    <option value="German">German</option>
+    <option value="Italian">Italian</option>
+    <option value="Portuguese">Portuguese</option>
+    <option value="Japanese">Japanese</option>
+    <option value="Chinese">Chinese (Mandarin)</option>
+    <option value="Korean">Korean</option>
+    <option value="Arabic">Arabic</option>
+    <option value="Hindi">Hindi</option>
+    <option value="Russian">Russian</option>
+    <option value="Thai">Thai</option>
+    <option value="Vietnamese">Vietnamese</option>
+    <option value="Turkish">Turkish</option>
+    <option value="Dutch">Dutch</option>
+    <option value="English">English</option>
+  </select>
+  <div class="hint">When you don't specify a language, translation will use this default.</div>
+
+  <label>Auto-Translate Mode</label>
+  <select id="translateAutoMode"><option value="false">Off</option><option value="true">On — translate all visible text</option></select>
+  <div class="hint">When enabled, automatically translates text seen through the camera. Uses more battery.</div>
+</div>
+
+<!-- Step 8g: Battery Saver -->
+<div class="step" id="s8g">
+  <div class="step-head">
+    <span class="step-num">8g</span> Battery Saver
+    <button class="help-btn" onclick="showHelp('batterysaver')">?</button>
+  </div>
+  <p class="step-desc">Extend battery life by reducing HUD refresh, pausing camera analysis, and switching to voice-only mode.</p>
+
+  <label>Auto-Enable Threshold (%)</label>
+  <input type="number" id="batterySaverAutoThreshold" placeholder="20" min="0" max="50">
+  <div class="hint">Automatically enable battery saver below this level. 0 = manual only (use voice: "save battery").</div>
+</div>
+
+<!-- Step 8h: Quick Actions & Voice Macros -->
+<div class="step" id="s8h">
+  <div class="step-head">
+    <span class="step-num">8h</span> Quick Actions
+    <button class="help-btn" onclick="showHelp('quickactions')">?</button>
+  </div>
+  <p class="step-desc">Voice-triggered macros that run multiple tools at once. Say the trigger phrase to activate.</p>
+
+  <label>Home Address</label>
+  <input type="text" id="homeAddress" placeholder="123 Main St, City, State">
+  <div class="hint">Used by "leaving work" and "heading home" quick actions for traffic/directions.</div>
+
+  <label>Work Address</label>
+  <input type="text" id="workAddress" placeholder="456 Office Blvd, City, State">
+  <div class="hint">Used by "leaving work" quick action as the starting point.</div>
+
+  <label>Custom Quick Actions (JSON)</label>
+  <textarea id="quickActionsJson" rows="4" placeholder='[{"name":"gym time","description":"Directions to gym","steps":[{"tool":"google_routes","args":{"destination":"Planet Fitness"}}]}]'></textarea>
+  <div class="hint">Advanced: define custom voice macros as a JSON array. Each action has a name, description, and steps (tool + args).</div>
 </div>
 
 <!-- Step 9: HUD Display Settings -->
@@ -309,10 +733,73 @@
     <button style="background:#555;color:#fff;flex:none;padding:8px 14px;font-size:13px;border-radius:6px;border:none;cursor:pointer" onclick="verifyApi('directions')">Test Directions</button>
     <button style="background:#555;color:#fff;flex:none;padding:8px 14px;font-size:13px;border-radius:6px;border:none;cursor:pointer" onclick="verifyApi('tasks')">Test Tasks</button>
     <button style="background:#555;color:#fff;flex:none;padding:8px 14px;font-size:13px;border-radius:6px;border:none;cursor:pointer" onclick="verifyApi('places')">Test Places</button>
+    <button style="background:#2e7d32;color:#fff;flex:none;padding:8px 14px;font-size:13px;border-radius:6px;border:none;cursor:pointer" onclick="verifyApi('air_quality')">Test Air Quality</button>
+    <button style="background:#6a1b9a;color:#fff;flex:none;padding:8px 14px;font-size:13px;border-radius:6px;border:none;cursor:pointer" onclick="verifyApi('research')">Test Research</button>
     <button style="background:#1a73e8;color:#fff;flex:none;padding:8px 14px;font-size:13px;border-radius:6px;border:none;cursor:pointer" onclick="verifyApi('location')">&#128205; Test Location</button>
     <button style="background:#e8710a;color:#fff;flex:none;padding:8px 14px;font-size:13px;border-radius:6px;border:none;cursor:pointer" onclick="verifyApi('traffic')">&#128663; Test Traffic</button>
   </div>
   <div id="verifyResults" style="display:none;margin-top:12px;padding:10px;background:#111;border-radius:6px;border:1px solid #333;font-size:12px;color:#aaa;line-height:1.8"></div>
+</div>
+
+<!-- Step 10: Skill Manager -->
+<div class="step" id="s10">
+  <div class="step-head">
+    <div class="step-num" style="background:#7c4dff;color:#fff">10</div>
+    <div class="step-title">Skill Manager</div>
+    <button class="help-btn" onclick="showHelp('skillmanager')">?</button>
+  </div>
+  <p class="step-desc">View, enable, and configure all TapInsight skills (tools). Skills are voice-activated capabilities your AI assistant can use.</p>
+
+  <div id="skillGrid" style="margin-top:12px"></div>
+
+  <hr style="border-color:#333;margin:16px 0">
+  <label style="color:#7c4dff">Add Custom Skill via QR Code</label>
+  <p class="step-desc">Scan a QR code containing skill configuration. Point your phone camera at the QR code.</p>
+  <button id="qrScanSkillBtn" style="background:#7c4dff;color:#fff;padding:10px 18px;font-size:13px;border-radius:8px;border:none;cursor:pointer;margin:8px 0;width:100%" onclick="startQrScan('skill')">
+    &#128247; Scan Skill QR Code
+  </button>
+  <div id="qrSkillResult" style="display:none;margin-top:8px;padding:10px;background:#111;border-radius:6px;border:1px solid #333;font-size:12px;color:#aaa"></div>
+</div>
+
+
+<!-- QR Scanner Modal -->
+<div class="modal" id="qrModal">
+  <div class="modal-content" style="max-width:400px;padding:16px;text-align:center">
+    <h3 id="qrModalTitle">Scan QR Code</h3>
+    <p id="qrModalDesc" style="font-size:12px;color:#aaa;margin-bottom:12px">Point your phone camera at the QR code</p>
+    <!-- Camera-based scanner (Chrome/Android with BarcodeDetector) -->
+    <div id="qrVideoWrap" style="position:relative;width:100%;max-width:340px;margin:0 auto;border-radius:10px;overflow:hidden;background:#000">
+      <video id="qrVideo" autoplay playsinline muted style="width:100%;display:block"></video>
+      <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:180px;height:180px;border:2px solid rgba(0,229,255,0.5);border-radius:12px;pointer-events:none"></div>
+      <canvas id="qrCanvas" style="display:none"></canvas>
+    </div>
+    <!-- Photo-capture fallback (iOS Safari / browsers without BarcodeDetector) -->
+    <div id="qrFallbackWrap" style="display:none">
+      <p style="font-size:13px;color:#ccc;margin:12px 0 8px">This browser can't scan live video. Use one of these options:</p>
+      <div style="background:#0d1117;border:1px solid #333;border-radius:8px;padding:12px;margin:8px 0;text-align:left">
+        <p style="font-size:13px;color:#00e5ff;margin:0 0 8px"><b>Option 1:</b> Use your Camera app</p>
+        <ol style="font-size:12px;color:#aaa;margin:0;padding-left:20px;line-height:1.6">
+          <li>Open your iPhone Camera app</li>
+          <li>Point at the QR code &mdash; a link banner appears</li>
+          <li>Long-press the banner &rarr; Copy Link</li>
+          <li>Come back here and paste below</li>
+        </ol>
+      </div>
+      <div style="background:#0d1117;border:1px solid #333;border-radius:8px;padding:12px;margin:8px 0;text-align:left">
+        <p style="font-size:13px;color:#00e5ff;margin:0 0 8px"><b>Option 2:</b> Take a photo</p>
+        <input type="file" id="qrPhotoInput" accept="image/*" capture="environment"
+               style="font-size:13px;color:#ccc;margin-top:4px;width:100%">
+        <p style="font-size:11px;color:#666;margin:4px 0 0">Take a photo of the QR code. We'll try to read it.</p>
+      </div>
+      <div style="margin-top:10px">
+        <input type="text" id="qrPasteInput" placeholder="Or paste the URL / QR data here"
+               style="width:100%;padding:10px;font-size:13px;background:#111;border:1px solid #444;border-radius:6px;color:#fff;box-sizing:border-box">
+        <button onclick="handleQrPaste()" style="margin-top:8px;background:#00e676;color:#000;padding:8px 16px;font-size:13px;font-weight:600;border-radius:6px;border:none;cursor:pointer;width:100%">Apply</button>
+      </div>
+    </div>
+    <div id="qrStatus" style="font-size:12px;color:#888;margin-top:10px;min-height:20px"></div>
+    <button class="close-btn" onclick="stopQrScan()" style="margin-top:12px">Cancel</button>
+  </div>
 </div>
 
 <!-- Feature Preview -->
@@ -326,9 +813,11 @@
     <div class="feature"><b>Floating Itinerary</b>Real-time calendar on your display</div>
     <div class="feature"><b>Tasks &amp; Reminders</b>Pending to-dos from Google Tasks on your HUD</div>
     <div class="feature"><b>Live News</b>Top headlines from Google News at a glance</div>
-    <div class="feature"><b>Quick Notes</b>"Remember this" &rarr; AI saves notes locally on glasses</div>
+    <div class="feature"><b>Translation</b>"Translate this to Spanish" — 40+ languages</div>
+    <div class="feature"><b>Battery Saver</b>"Save battery" — extend life by 40-60%</div>
+    <div class="feature"><b>Quick Actions</b>"Good morning" — daily briefing macro</div>
+    <div class="feature"><b>TapClaw</b>"Tapclaw check my emails" — personal AI agent</div>
     <div class="feature"><b>Vibe Sync</b>Voice-controlled Spotify playback</div>
-    <div class="feature"><b>Sonos Control</b>"Continue audio in the kitchen"</div>
     <div class="feature"><b>Camera AI</b>QR codes, menus, signs auto-detected</div>
   </div>
 </div>
@@ -347,14 +836,20 @@
     <button class="close-btn" onclick="closeHelp()">Close</button>
   </div>
 </div>
+<div class="toast" id="toast"></div>
 
 <script>
 const FIELDS = {
   geminiKey:           { key: 'gemini_api_key',         type: 'string' },
   geminiModel:         { key: 'gemini_model_override',  type: 'string' },
+  researchProvider:    { key: 'research_provider',      type: 'string' },
+  researchApiKey:      { key: 'research_api_key',       type: 'string' },
+  researchModel:       { key: 'research_model',         type: 'string' },
+  learnLmModel:        { key: 'learnlm_model',          type: 'string' },
   calendarApiKey:      { key: 'calendar_api_key',       type: 'string' },
   calendarId:          { key: 'calendar_id',            type: 'string' },
   googleMapsApiKey:    { key: 'google_maps_api_key',    type: 'string' },
+  phoneLocationBridgeEnabled: { key: 'phone_location_bridge_enabled', type: 'bool' },
   googleOAuthClientId:     { key: 'google_oauth_client_id',     type: 'string' },
   googleOAuthClientSecret: { key: 'google_oauth_client_secret', type: 'string' },
   spotifyClientId:         { key: 'spotify_client_id',          type: 'string' },
@@ -367,6 +862,9 @@ const FIELDS = {
   promptUrlRules:      { key: 'prompt_url_rules',       type: 'string' },
   ttsVolume:           { key: 'tts_volume',             type: 'float'  },
   ttsMuted:            { key: 'tts_muted',              type: 'bool'   },
+  cloudTtsApiKey:      { key: 'cloud_tts_api_key',      type: 'string' },
+  cloudTtsVoiceName:   { key: 'cloud_tts_voice_name',   type: 'string' },
+  cloudTtsLanguage:    { key: 'cloud_tts_language',      type: 'string' },
   hudShowCalendar:     { key: 'hud_show_calendar',      type: 'bool'   },
   hudShowTraffic:      { key: 'hud_show_traffic',       type: 'bool'   },
   hudShowNotifications:{ key: 'hud_show_notifications', type: 'bool'   },
@@ -379,7 +877,40 @@ const FIELDS = {
   hudRefreshInterval:  { key: 'hud_refresh_interval_seconds', type: 'int' },
   enabledCalendarIds:  { key: 'enabled_calendar_ids',   type: 'string' },
   calendarItemCounts:  { key: 'calendar_item_counts',   type: 'string' },
-  hudDisplayOrder:     { key: 'hud_display_order',      type: 'string' }
+  hudDisplayOrder:     { key: 'hud_display_order',      type: 'string' },
+  // Gemini Live Voice & AI
+  liveVoiceName:       { key: 'live_voice_name',        type: 'string' },
+  ttsVoiceName:        { key: 'tts_voice_name',         type: 'string' },
+  liveThinkingLevel:   { key: 'live_thinking_level',    type: 'string' },
+  liveTemperature:     { key: 'live_temperature',       type: 'float'  },
+  liveBargeInSensitivity: { key: 'live_barge_in_sensitivity', type: 'float'  },
+  liveSilenceThreshold: { key: 'live_silence_threshold', type: 'int'  },
+  liveDisableInterrupt: { key: 'live_disable_interrupt', type: 'bool' },
+  liveSessionResumption:   { key: 'live_session_resumption',    type: 'bool' },
+  liveContextCompression:  { key: 'live_context_compression',   type: 'bool' },
+  liveCompressionTokens:   { key: 'live_compression_tokens',    type: 'int'  },
+  liveLanguageCode:    { key: 'live_language_code',     type: 'string' },
+  // Model Timeouts
+  timeoutLiveIdleSeconds:  { key: 'timeout_live_idle_seconds',  type: 'int' },
+  timeoutGeminiSeconds:    { key: 'timeout_gemini_seconds',     type: 'int' },
+  timeoutResearchSeconds:  { key: 'timeout_research_seconds',   type: 'int' },
+  timeoutLearnLmSeconds:   { key: 'timeout_learnlm_seconds',   type: 'int' },
+  // Assistant Default Mode
+  assistantDefaultCamera: { key: 'assistant_default_camera', type: 'bool' },
+  // Translation
+  translateDefaultLanguage: { key: 'translate_default_language', type: 'string' },
+  translateAutoMode:    { key: 'translate_auto_mode',       type: 'bool'   },
+  // Battery Saver
+  batterySaverAutoThreshold: { key: 'battery_saver_auto_threshold', type: 'int' },
+  // Quick Actions
+  homeAddress:          { key: 'home_address',              type: 'string' },
+  workAddress:          { key: 'work_address',              type: 'string' },
+  quickActionsJson:     { key: 'quick_actions_json',        type: 'string' },
+  // Accessibility
+  hudFontScale:        { key: 'hud_font_scale',         type: 'float'  },
+  hudHighContrast:     { key: 'hud_high_contrast',      type: 'bool'   },
+  ttsSpeechRate:       { key: 'tts_speech_rate',        type: 'float'  },
+  ttsAutoRead:         { key: 'tts_auto_read',          type: 'bool'   }
 };
 
 const HELP = {
@@ -387,14 +918,14 @@ const HELP = {
     title: 'Google Cloud Project',
     body: `<p>A GCP project is the container for all your API keys and OAuth credentials.</p>
 <ol><li>Go to <a href="https://console.cloud.google.com/projectcreate" target="_blank" style="color:#00e5ff">console.cloud.google.com</a></li>
-<li>Click "New Project" and name it (e.g. "AITap")</li>
+<li>Click "New Project" and name it (e.g. "TapInsight")</li>
 <li>Note the Project ID &mdash; you'll select this project when creating keys</li>
 <li>Enable billing (required for some APIs, but most have generous free tiers)</li></ol>
 <p>All subsequent keys should be created inside this same project.</p>`
   },
   gemini: {
     title: 'Gemini API Key',
-    body: `<p>This is the core AI engine that powers AITap's voice and vision.</p>
+    body: `<p>This is the core AI engine that powers TapInsight's voice and vision.</p>
 <ol><li>Go to <a href="https://aistudio.google.com/apikey" target="_blank" style="color:#00e5ff">AI Studio</a></li>
 <li>Click "Create API Key"</li>
 <li>Select your GCP project from Step 1</li>
@@ -404,31 +935,97 @@ const HELP = {
   },
   model: {
     title: 'Model Override',
-    body: `<p>AITap defaults to <code>gemini-2.5-flash-native-audio</code> for Live sessions (voice + camera). You can override this if you want to use a different model.</p>
+    body: `<p>TapInsight defaults to <code>gemini-3.1-flash-live-preview</code> for Live sessions (voice + camera). You can override this if you want to use a different Live-capable model.</p>
 <p><b>Available models:</b></p>
-<ol><li><code>gemini-2.5-flash</code> &mdash; Fast, good for most tasks</li>
-<li><code>gemini-2.5-pro</code> &mdash; Slower but more capable</li></ol>
-<p>Leave blank to use the default. The Live audio session always uses the native-audio variant regardless of this setting.</p>`
+<ol><li><code>gemini-3.1-flash-live-preview</code> &mdash; Current Live voice + camera default</li>
+<li><code>gemini-3.1-pro-preview</code> &mdash; Default model for regular turns (Gemini 3.1 Pro)</li>
+<li><code>gemini-3-flash-preview</code> &mdash; Faster Flash model, good fallback</li></ol>
+<p>Leave blank to use the default. Live sessions use the Live preview model while non-Live turns keep using the standard Gemini defaults.</p>`
+  },
+  research: {
+    title: 'Research Provider',
+    body: `<p>This powers explicit deep-dive requests like <code>research fusion power</code>, <code>analyze RayNeo X3 optics</code>, or <code>brief me on the history of electronic music</code>. TapInsight routes those requests to a separate model API instead of your main live assistant so you can keep the day-to-day assistant fast while using a different model for heavier reading.</p>
+<p><b>How to use it on the glasses:</b></p>
+<ol>
+<li>Say <code>research &lt;topic&gt;</code> for a longer structured brief.</li>
+<li>Say <code>analyze &lt;topic&gt;</code> when you want tradeoffs, implications, and caveats.</li>
+<li>Say <code>deep dive on &lt;topic&gt;</code> when you want the most detail.</li>
+</ol>
+<p><b>Good uses for the research function:</b></p>
+<ol>
+<li>History and background: <code>research the history of Depeche Mode</code></li>
+<li>Technical explanation: <code>analyze NAT64 on mobile hotspots</code></li>
+<li>Academic overview: <code>research pedagogy in ethnic studies</code></li>
+<li>Code and architecture: <code>research Android WebView background audio issues</code></li>
+</ol>
+<p><b>Providers:</b></p>
+<ol>
+<li><code>Gemini</code> &mdash; Good default for broad research, general writing, structured summaries, and multimodal-adjacent thinking. Uses Google's <code>generateContent</code> API.</li>
+<li><code>OpenAI Codex</code> &mdash; Best when the research topic is code-heavy: debugging, repo architecture, refactors, agents, tool use, or implementation strategy. Uses the OpenAI Responses API.</li>
+<li><code>Groq</code> &mdash; Best when you want fast text-only research and low latency. Uses Groq's OpenAI-compatible Responses API.</li>
+</ol>
+<p><b>Suggested models and when to use them:</b></p>
+<ol>
+<li><code>gemini-3.1-pro-preview</code> &mdash; default, balanced, good for most reading briefs.</li>
+<li><code>gemini-3-flash-preview</code> &mdash; faster alternative for lighter research tasks.</li>
+<li><code>gpt-5.2-codex</code> &mdash; best for software engineering research, code analysis, and implementation planning.</li>
+<li><code>llama-3.3-70b-versatile</code> &mdash; strong general-purpose Groq option for quick research and readable summaries.</li>
+<li><code>llama-3.1-8b-instant</code> &mdash; very fast Groq option for short answers and lightweight summaries.</li>
+<li><code>openai/gpt-oss-120b</code> &mdash; another Groq-hosted option for heavier reasoning if your Groq organization enables it.</li>
+</ol>
+<p><b>Simple selection guide:</b></p>
+<ol>
+<li>Use <code>Gemini</code> if you want the safest general default.</li>
+<li>Use <code>OpenAI Codex</code> if your research often involves code, APIs, systems, or debugging.</li>
+<li>Use <code>Groq</code> if speed matters and you want a fast reading brief.</li>
+</ol>
+<p><b>Recommended setup pattern:</b></p>
+<ol>
+<li>Fast daily use: <code>Gemini 2.5 Flash</code> or <code>Groq Llama 3.3 70B</code></li>
+<li>Heavy engineering analysis: <code>GPT-5.2-Codex</code></li>
+<li>Keep the model field blank unless you have a reason to pin a specific one.</li>
+</ol>
+<p>Leave the model blank to use the app's built-in default for the selected provider. Available models may vary by account, project, or provider permissions.</p>`
+  },
+  learnlm: {
+    title: 'LearnLM Tutor Model',
+    body: `<p>This powers tutoring requests such as <code>teach me electronics</code>, <code>help me learn pruning roses</code>, or <code>how do I solder two wires safely</code>.</p>
+<p>TapInsight uses your existing Gemini API key for tutoring. The default is <code>learnlm-2.0-flash-experimental</code>, a dedicated learning model. If that model is unavailable, TapInsight falls back to <code>gemini-3.1-pro-preview</code> with a tutoring-first prompt and saved lesson memory.</p>
+<p><b>Good uses:</b></p>
+<ol>
+<li>Academia: <code>help me learn Marxist analysis</code></li>
+<li>Vocational skills: <code>show me how to wire a light switch</code></li>
+<li>Gardening: <code>teach me how to prune tomatoes</code></li>
+<li>Cooking: <code>how do I make risotto</code></li>
+<li>Electronics: <code>help me understand breadboard grounding</code></li>
+</ol>
+<p>TapInsight saves tutoring sessions privately on the glasses so future lessons can build on related chat cards and prior tutoring topics.</p>`
   },
   oauth: {
     title: 'Google OAuth Setup',
-    body: `<p>OAuth lets AITap access your personal Google data (Calendar, Keep, Contacts).</p>
-<ol><li>Go to <a href="https://console.cloud.google.com/auth/overview" target="_blank" style="color:#00e5ff">GCP Auth Platform</a></li>
-<li>Configure the OAuth consent screen:<br>&bull; User type: External<br>&bull; App name: "TapInsight"<br>&bull; Add your email as test user</li>
-<li>Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:#00e5ff">Credentials</a> &rarr; Create &rarr; OAuth Client ID</li>
-<li>Type: <b>Desktop application</b></li>
-<li>Copy both the Client ID and Client Secret</li></ol>
-<p><b>How authorization works:</b></p>
-<ol><li>Enter Client ID + Secret above, click "Authorize with Google"</li>
-<li>Sign in and grant permission in the popup</li>
-<li>Google redirects to a page that won't load &mdash; this is normal!</li>
-<li>Copy the authorization code from the URL bar and paste it back here</li></ol>
-<p><b>Enable these APIs</b> in <a href="https://console.cloud.google.com/apis/library" target="_blank" style="color:#00e5ff">API Library</a>:</p>
-<ol><li>Google Calendar API</li><li>Google Keep API</li><li>People API (Contacts)</li><li>Tasks API</li></ol>`
+    body: `<p>OAuth lets TapInsight access your personal Google data (Calendar, Keep, Contacts, Tasks).</p>
+<p><b>Step 1 &mdash; Create a Google Cloud project</b></p>
+<ol><li>Go to <a href="https://console.cloud.google.com/auth/overview" target="_blank" style="color:#00e5ff">Google Cloud Auth Platform</a> and create a project (or use an existing one)</li>
+<li>Configure the OAuth consent screen:<br>&bull; User type: <b>External</b><br>&bull; App name: <b>TapInsight</b><br>&bull; Add your Google email as a <b>test user</b></li></ol>
+<p><b>Step 2 &mdash; Enable the APIs</b></p>
+<p>In <a href="https://console.cloud.google.com/apis/library" target="_blank" style="color:#00e5ff">API Library</a>, search for and enable each of these:</p>
+<ol><li>Google Calendar API</li><li>Google Keep API</li><li>People API (Contacts)</li><li>Tasks API</li></ol>
+<p><b>Step 3 &mdash; Create OAuth credentials</b></p>
+<ol><li>Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:#00e5ff">Credentials</a> &rarr; <b>Create Credentials</b> &rarr; <b>OAuth Client ID</b></li>
+<li>Application type: <b>Web application</b></li>
+<li>Under <b>Authorized redirect URIs</b>, add exactly:<br><code id="oauthRedirectHint">http://localhost:19110/oauth/callback</code></li>
+<li>Click <b>Create</b>, then copy the <b>Client ID</b> and <b>Client Secret</b></li></ol>
+<p><b>Step 4 &mdash; Authorize</b></p>
+<ol><li>Paste the Client ID and Secret into the fields on the setup page</li>
+<li>Click <b>Authorize with Google</b> &mdash; a 3-step guide will appear</li>
+<li>Click <b>Open Google Sign-In</b> &mdash; a new tab opens for you to sign in</li>
+<li>After granting permission, the tab will show a "can't be reached" error &mdash; <b>this is expected!</b> Your glasses are on a local network, so Google can't redirect back directly</li>
+<li>Copy the <b>entire URL</b> from that error page's address bar and paste it into Step 3 on the setup page</li>
+<li>Click <b>Complete Authorization</b> &mdash; done!</li></ol>`
   },
   calendar: {
     title: 'Google Calendar',
-    body: `<p>The Calendar API key lets AITap read your schedule and show upcoming events on the HUD.</p>
+    body: `<p>The Calendar API key lets TapInsight read your schedule and show upcoming events on the HUD.</p>
 <ol><li>Use the same API key from Step 2 (Gemini key), OR create a separate one</li>
 <li>Make sure Google Calendar API is enabled in your <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" style="color:#00e5ff">GCP project</a></li>
 <li>Calendar ID "primary" = your main Google calendar</li>
@@ -439,11 +1036,13 @@ const HELP = {
     title: 'Google Maps, Routes & Places',
     body: `<p>Enables live traffic, turn-by-turn directions, nearby place discovery, and commute time calculations on your AR glasses.</p>
 <p><b>API Key:</b> This is the same kind of <code>AIza...</code> key as your Gemini key. You can reuse the same key or create a dedicated one in <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style="color:#00e5ff">GCP Credentials</a>.</p>
-<p><b>You need to enable 3 APIs:</b></p>
+<p><b>You need to enable 5 APIs:</b></p>
 <ol>
+<li><a href="https://console.cloud.google.com/apis/library/maps-backend.googleapis.com" target="_blank" style="color:#00e5ff">Maps JavaScript API</a> &mdash; Renders the interactive map in the AR navigation HUD. Required for the map to display at all. Without this API enabled, the map will show "Something went wrong."</li>
 <li><a href="https://console.cloud.google.com/apis/library/directions-backend.googleapis.com" target="_blank" style="color:#00e5ff">Directions API</a> &mdash; Calculates routes between two locations. Provides step-by-step turn-by-turn directions, total distance, estimated travel time, and real-time traffic duration. Supports driving, walking, transit, and bicycling modes.</li>
 <li><a href="https://console.cloud.google.com/apis/library/routes.googleapis.com" target="_blank" style="color:#00e5ff">Routes API</a> &mdash; Google's next-gen routing engine. Computes optimized routes and travel times with advanced features like route matrices (comparing multiple destinations), toll estimation, and eco-friendly routing. Works alongside the Directions API for the best results.</li>
 <li><a href="https://console.cloud.google.com/apis/library/places-backend.googleapis.com" target="_blank" style="color:#00e5ff">Places API (New)</a> &mdash; Discovers nearby businesses, restaurants, gas stations, and points of interest. Powers queries like "Find coffee near me" or "What restaurants are nearby?" Returns names, addresses, ratings, hours, and photos.</li>
+<li><a href="https://console.cloud.google.com/apis/library/airquality.googleapis.com" target="_blank" style="color:#00e5ff">Air Quality API</a> &mdash; Returns current AQI and pollutant status for the glasses' current GPS location. Powers the AQI indicator next to the battery and voice queries about air quality.</li>
 </ol>
 <p><b>What it enables:</b></p>
 <ol><li>"How's traffic to work?" &rarr; Live commute time with traffic</li>
@@ -452,12 +1051,23 @@ const HELP = {
 <li>Smart commute alerts before calendar events</li></ol>
 <p><b>Free tier:</b> Directions &amp; Routes: $200/month free credit (~40,000 requests). Places: same $200 credit pool.</p>`
   },
+  phonegps: {
+    title: 'Phone GPS Bridge',
+    body: `<p>This optional module lets TapInsight use the GPS from the phone that opened the companion page.</p>
+<ol><li>Make sure you are accessing this page via <b>https://</b> (not http://). On first visit, your browser will show a certificate warning — tap <b>Advanced</b> &gt; <b>Proceed</b> to accept the self-signed certificate.</li>
+<li>Leave it <b>Off</b> by default if the glasses location works well enough.</li>
+<li>Turn it <b>On</b> when you want the phone to supply a fresher, usually more accurate GPS fix.</li>
+<li>Tap <b>Use This Phone\'s GPS</b> on the companion page and allow location permission in the phone browser.</li>
+<li>Tap <b>Stop Phone GPS</b> to stop sharing and revert future map queries back to the glasses' normal location pipeline.</li></ol>
+<p><b>Important:</b> HTTPS is required for the browser Geolocation API. The companion server uses a self-signed certificate — accept it once per device and GPS sharing will work.</p>
+<p>If this module is off, it does not disturb the preexisting map/location services.</p>`
+  },
   spotify: {
     title: 'Spotify Setup',
     body: `<p>Control Spotify playback with your voice through the AR glasses.</p>
 <ol><li>Go to <a href="https://developer.spotify.com/dashboard" target="_blank" style="color:#00e5ff">Spotify Developer Dashboard</a></li>
 <li>Click "Create App"</li>
-<li>App name: "AITap", Description: "AR assistant"</li>
+<li>App name: "TapInsight", Description: "AR assistant"</li>
 <li>Set Redirect URI: <code>http://localhost:8888/callback</code></li>
 <li>Check "Web API" under APIs</li>
 <li>Copy the Client ID from Settings</li></ol>
@@ -465,12 +1075,12 @@ const HELP = {
   },
   personality: {
     title: 'Personality',
-    body: `<p>This text is appended to the system prompt and shapes how AITap communicates.</p>
+    body: `<p>This text is appended to the system prompt and shapes how TapInsight communicates.</p>
 <p><b>Examples:</b></p>
 <ol><li>"Be concise and direct. Use casual language. Proactively describe things you see through the camera."</li>
 <li>"Speak like a knowledgeable friend. Keep responses under 2 sentences unless asked for more detail."</li>
 <li>"You are a professional assistant. Be formal and thorough. Always suggest next steps."</li></ol>
-<p>Leave blank for the default AITap personality.</p>`
+<p>Leave blank for the default TapInsight personality.</p>`
   },
   hud: {
     title: 'HUD Display Settings',
@@ -483,19 +1093,240 @@ const HELP = {
 <li><b style="color:#FFB14A">News Headlines:</b> Shows top headlines from Google News RSS in amber. No API key needed &mdash; uses the public feed. Control refresh interval separately.</li>
 <li><b>Refresh Interval:</b> How often (in seconds) to re-fetch calendar, tasks, and traffic data. Lower values = fresher data but more battery use. Default: 60 seconds.</li>
 <li><b>Enabled Calendars:</b> Click "Load Calendars" to see all Google Calendars under your account (including subscribed calendars like Academic Events, Holidays, etc.). Check the ones you want to appear on your HUD. Use the count dropdown next to each calendar to set how many events from that calendar appear (1&ndash;10).</li></ol>
-<p>Changes take effect after saving and restarting AITap.</p>`
+<p>Changes take effect after saving and restarting TapInsight.</p>`
   },
   sysprompt: {
     title: 'System Prompt Sections',
     body: `<p>The AI system prompt is broken into editable sections so you can fine-tune specific behaviors without replacing everything.</p>
 <p><b>Sections:</b></p>
-<ol><li><b>Identity</b> &mdash; Who AITap is and what it can perceive (camera, voice)</li>
+<ol><li><b>Identity</b> &mdash; Who TapInsight is and what it can perceive (camera, voice)</li>
 <li><b>Tool Routing Rules</b> &mdash; Which tools Gemini calls for calendar, music, navigation, etc.</li>
 <li><b>Behavior &amp; Output</b> &mdash; Proactive behaviors (QR scanning, text reading), HUD formatting limits, privacy rules</li>
 <li><b>URL Rules</b> &mdash; How links are generated (prefer direct URLs vs. search links)</li></ol>
 <p>Leave a section <b>blank</b> to use the built-in default. Edit only the sections you want to change.</p>
 <p>The <b>Full Override</b> field at the bottom replaces ALL sections if set &mdash; use it only if you want total control.</p>
 <p><b>Capabilities</b> (list of available tools) is auto-generated and cannot be edited.</p>`
+  },
+  tapclaw: {
+    title: 'TapClaw Integration',
+    body: `<p><b>TapClaw</b> is an open-source personal AI assistant that runs on your own devices. It connects to 50+ services including smart home, email, calendar, productivity apps, health trackers, and more.</p>
+<p>Communication uses <b>WebSocket only</b> (no REST/HTTP API) with a challenge-response authentication protocol using Ed25519 device identity signing.</p>
+
+<p><b>Connecting TapClaw to your glasses:</b></p>
+<p>There are two ways to connect. <b>QR Pairing</b> is recommended for most users; <b>Manual Token</b> is an alternative for advanced setups.</p>
+
+<p style="margin-top:12px"><b>Method 1: QR Code Pairing (Recommended)</b></p>
+<ol>
+<li>On your TapClaw server, run <code>openclaw qr</code> to display a setup QR code</li>
+<li>Scan the QR code using the <b>Scan TapClaw QR Code</b> button in the Quick Setup section above</li>
+<li>Click <b>Start Pairing</b> &mdash; the glasses register as a <b>node</b> device on your server</li>
+<li>On your server terminal, approve the request:<br><code style="display:inline-block;margin:4px 0;background:#1a1a2e;padding:4px 8px;border-radius:4px">openclaw devices approve &lt;requestId&gt;</code></li>
+<li>After approval, try saying <b>"tapclaw hello"</b>. The gateway may create additional pending requests for <b>role-upgrade</b> (to operator) and <b>scope-upgrade</b> (for operator.write). Check <code>openclaw devices list</code> and approve any pending requests.</li>
+<li>Once all approvals are done, TapClaw is fully connected. Restart the app if needed.</li>
+</ol>
+
+<p style="margin-top:12px"><b>Method 2: Manual Shared Token</b></p>
+<ol>
+<li>On your server, run: <code>openclaw config get gateway.auth.token</code> to get the shared gateway token</li>
+<li>Enter the <b>Gateway URL</b> using <code>ws://</code> prefix (e.g. <code>ws://your-gateway-host:18789</code>) and the <b>Gateway Token</b> in Section 8e above</li>
+<li>Enable the TapClaw toggle and tap Save</li>
+<li>Note: This still requires device identity keys from a prior QR pairing. The gateway requires Ed25519 device identity for all connections.</li>
+</ol>
+
+<p style="margin-top:12px"><b>Token types explained:</b></p>
+<ul>
+<li><b>Bootstrap token</b> &mdash; Encoded in the QR code. Temporary credential for the initial pairing handshake only.</li>
+<li><b>Device token</b> &mdash; Issued after pairing approval. Stored on the glasses. Unique to this device. <b>Lost on APK reinstall.</b></li>
+<li><b>Gateway auth token</b> &mdash; From <code>gateway.auth.token</code> in server config. Used by manual setup. <b>Not</b> the same as <code>gateway.remote.token</code> (which is for CLI remote access).</li>
+</ul>
+
+<p style="margin-top:12px"><b>Approval flow after QR pairing:</b></p>
+<p>The initial QR pairing registers the device as a "node". To make agent calls, the device needs the "operator" role with "operator.write" scope. The gateway handles this as separate upgrade requests:</p>
+<ol>
+<li>Initial pairing &rarr; approve (device joins as node)</li>
+<li>Role upgrade to operator &rarr; approve (run <code>openclaw devices list</code> to see pending)</li>
+<li>Scope upgrade for operator.write &rarr; approve</li>
+</ol>
+
+<p style="margin-top:12px"><b>Example voice commands:</b></p>
+<ol>
+<li><code>tapclaw check my emails</code> &mdash; Read and triage your inbox</li>
+<li><code>tapclaw turn off the living room lights</code> &mdash; Smart home control</li>
+<li><code>tapclaw what's on my todo list</code> &mdash; Check tasks</li>
+<li><code>tapclaw what do you see</code> &mdash; Analyze the current camera view (sends image to TapClaw)</li>
+<li><code>tapclaw describe what I'm looking at</code> &mdash; Vision analysis via camera</li>
+<li><code>tapclaw send a message to John saying I'll be late</code> &mdash; Messaging</li>
+<li><code>tapclaw set the thermostat to 72</code> &mdash; Climate control</li>
+</ol>
+
+<p style="margin-top:12px"><b>Remote access (outside your home network):</b></p>
+<p>By default, TapClaw requires the glasses and server to be on the same Wi-Fi. To use TapClaw over cell service or any network, set up a <b>Cloudflare Tunnel</b>:</p>
+<ol>
+<li>Install <code>cloudflared</code> on your server: <code>brew install cloudflared</code> (macOS) or see <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" target="_blank" style="color:#00e5ff">Cloudflare docs</a></li>
+<li>Run: <code>cloudflared tunnel --url http://localhost:18789</code></li>
+<li>Copy the generated URL (e.g. <code>https://random-words.trycloudflare.com</code>)</li>
+<li>Enter the URL as the Gateway URL above &mdash; TapInsight automatically converts <code>https://</code> to <code>wss://</code></li>
+<li>For a permanent tunnel with a custom domain, run <code>cloudflared tunnel create openclaw</code> and configure a named tunnel</li>
+</ol>
+<p style="font-size:11px;color:#888">Alternative: <a href="https://tailscale.com" target="_blank" style="color:#00e5ff">Tailscale</a> (mesh VPN) also works &mdash; use your Tailscale IP with <code>ws://</code> as the Gateway URL.</p>
+
+<p style="margin-top:12px"><b>Troubleshooting:</b></p>
+<ul>
+<li>For local access, glasses and server must be on the <b>same Wi-Fi</b>. For remote access, use a Cloudflare Tunnel or Tailscale.</li>
+<li>Default gateway port is <code>18789</code> (WebSocket only &mdash; <code>curl</code> won't work)</li>
+<li>If Gemini says TapClaw is unavailable after pairing, <b>restart the app</b> &mdash; tool registration happens at startup</li>
+<li>Run <code>openclaw devices list</code> to check for <b>pending approval requests</b> (role-upgrade, scope-upgrade)</li>
+<li>Run <code>openclaw doctor</code> to diagnose connectivity issues</li>
+<li>Test gateway: <code>openclaw gateway call status --json</code></li>
+<li>If settings were wiped by APK reinstall, re-enter them here or re-scan the QR code</li>
+</ul>
+
+<p><b>Session ID:</b> Use <code>main</code> for your primary agent. Create separate sessions (e.g. <code>glasses</code>) to keep AR interactions isolated from your desktop conversations.</p>
+<p><b>Learn more:</b> <a href="https://openclaw.ai" target="_blank" style="color:#00e5ff">openclaw.ai</a> | <a href="https://github.com/openclaw/openclaw" target="_blank" style="color:#00e5ff">GitHub</a></p>`
+  },
+  translation: {
+    title: 'Real-Time Translation',
+    body: `<p>Translate speech, text, and anything visible through the camera into 40+ languages.</p>
+<p><b>Voice commands:</b></p>
+<ul>
+<li>"Translate hello to Spanish"</li>
+<li>"Say thank you in Japanese"</li>
+<li>"Translate this menu to English" (camera mode)</li>
+<li>"What does that sign say in French?"</li>
+<li>"Translate: where is the train station"</li>
+</ul>
+<p><b>Default Language:</b> Set a default target language so you can just say "translate this" without specifying a language each time. Great for travel.</p>
+<p><b>Auto-Translate Mode:</b> When enabled, continuously translates all visible text in the camera feed. Very useful abroad but uses more battery. Combine with Battery Saver for optimal use.</p>
+<p>Translation is powered by Gemini's native multilingual capabilities, providing natural, context-aware translations including idioms and cultural nuances.</p>`
+  },
+  batterysaver: {
+    title: 'Battery Saver',
+    body: `<p>Extend your X3 Pro battery life by 40-60% when you need to conserve power.</p>
+<p><b>What it does:</b></p>
+<ul>
+<li>Reduces HUD refresh rate</li>
+<li>Pauses camera-based AI analysis</li>
+<li>Pauses background polling (news, air quality)</li>
+<li>Switches to voice-only AI mode</li>
+</ul>
+<p><b>Voice commands:</b></p>
+<ul>
+<li>"Enable battery saver" / "Save battery"</li>
+<li>"Disable battery saver"</li>
+<li>"Battery status" / "How much battery?"</li>
+</ul>
+<p><b>Auto-Enable:</b> Set a threshold (e.g., 20%) and battery saver activates automatically when your battery drops below that level. Set to 0 for manual-only control.</p>`
+  },
+  quickactions: {
+    title: 'Quick Actions & Voice Macros',
+    body: `<p>Define voice-triggered shortcuts that run multiple tools at once.</p>
+<p><b>Built-in quick actions:</b></p>
+<ul>
+<li><b>"Good morning"</b> — triggers your daily briefing (calendar, weather, traffic)</li>
+<li><b>"Leaving work"</b> — gets traffic and ETA to your home address</li>
+<li><b>"Heading home"</b> — same as "leaving work"</li>
+<li><b>"Meeting mode"</b> — shows upcoming calendar events</li>
+<li><b>"What's nearby"</b> — finds nearby restaurants and points of interest</li>
+</ul>
+<p><b>Home & Work Addresses:</b> Set these so "leaving work" and "heading home" know your start/end points.</p>
+<p><b>Custom Actions (Advanced):</b> Define your own macros as JSON. Each action needs a name (trigger phrase), description, and steps (list of tools to run with their arguments). Say "list quick actions" to see all available macros.</p>`
+  },
+  skillmanager: {
+    title: 'Skill Manager',
+    body: `<p>The Skill Manager shows all available AI tools (skills) your glasses can use. Skills are voice-activated capabilities — each one handles a specific type of request.</p>
+<p><b>Categories:</b></p>
+<ul>
+<li><b>Productivity:</b> Calendar, Tasks, Notes, Daily Briefing, Quick Actions</li>
+<li><b>Navigation:</b> Routes, Places, Ask Maps (3D)</li>
+<li><b>Communication:</b> Contacts, Messages, Phone Calls</li>
+<li><b>Knowledge:</b> Research, LearnLM Tutor, News, Context Memory</li>
+<li><b>Language:</b> Real-time Translation (40+ languages)</li>
+<li><b>Media:</b> Spotify, Sonos</li>
+<li><b>Agent:</b> TapClaw (personal AI assistant)</li>
+<li><b>System:</b> Battery Saver, Camera</li>
+</ul>
+<p><b>Adding Skills via QR Code:</b> Scan a QR code to import skill configurations. QR codes can contain TapClaw setup data, quick action definitions, or general settings.</p>
+<p><b>QR Code Formats:</b></p>
+<ul>
+<li>JSON: <code>{"type":"openclaw","url":"...","token":"..."}</code></li>
+<li>URL: <code>tapinsight://openclaw?url=...&token=...</code></li>
+<li>Quick Action: <code>{"type":"quick_action","name":"gym time","steps":[...]}</code></li>
+</ul>
+<p>The QR scanner uses your phone's rear camera and the BarcodeDetector API (Chrome for Android recommended).</p>`
+  },
+  clawsetup: {
+    title: 'TapClaw Quick Setup',
+    body: `<p>The Quick Setup makes connecting TapClaw to your AR glasses effortless — even if you've never used it before.</p>
+<p><b>What is TapClaw?</b> It's your personal AI assistant that runs on your own server (or Raspberry Pi). It handles smart home control, email, calendar automation, web browsing, health tracking, and custom workflows. Communication uses <b>WebSocket only</b> (port 18789) with Ed25519 device identity authentication.</p>
+
+<p><b>Setup Methods:</b></p>
+<ol>
+<li><b>QR Code + Device Pairing (Recommended):</b>
+  <ul>
+  <li>On your TapClaw server, run: <code>openclaw qr</code></li>
+  <li>Scan the QR code using the <b>Scan TapClaw QR Code</b> button on this page</li>
+  <li>Click <b>Start Pairing</b> — the glasses register as a node device on your server</li>
+  <li>On your server terminal, approve the request: <code>openclaw devices approve &lt;requestId&gt;</code></li>
+  <li>Try <b>"tapclaw hello"</b>, then check <code>openclaw devices list</code> for additional pending approvals (role-upgrade to operator, scope-upgrade for operator.write). Approve each one.</li>
+  </ul>
+</li>
+<li><b>Setup URL:</b> Paste a URL like <code>tapinsight://openclaw?url=ws://192.168.1.100:18789&token=abc123</code> (use <code>ws://</code> not <code>http://</code>)</li>
+<li><b>Manual Token:</b> Scroll to Section 8e (TapClaw), enter the Gateway URL (<code>ws://YOUR_SERVER:18789</code>) and the gateway auth token from <code>openclaw config get gateway.auth.token</code></li>
+</ol>
+
+<p><b>What happens during pairing (multi-step approval):</b></p>
+<ol>
+<li>The QR code contains a <b>bootstrap token</b> — a temporary credential for the initial handshake</li>
+<li>The glasses generate an Ed25519 keypair and connect via WebSocket. The server sends a <b>challenge nonce</b>.</li>
+<li>The glasses sign the challenge with the Ed25519 private key and send a connect frame with device identity</li>
+<li>Server returns <code>PAIRING_REQUIRED</code> — approve with <code>openclaw devices approve &lt;requestId&gt;</code></li>
+<li>After initial approval, the glasses connect as <b>operator</b> role (needed for agent calls). This triggers a <b>role-upgrade</b> request — approve it.</li>
+<li>Next, the glasses request <b>operator.write</b> scope. This triggers a <b>scope-upgrade</b> request — approve it.</li>
+<li>After all three approvals, TapClaw is fully operational. Run <code>openclaw devices list</code> to verify the device shows as operator with scopes.</li>
+</ol>
+
+<p><b>Testing:</b> After setup and all approvals, tap <b>Check TapClaw Status</b> to verify connectivity. Then say <b>"tapclaw hello"</b> on your glasses. If Gemini says TapClaw is unavailable, check <code>openclaw devices list</code> for pending approvals first, then restart the app if needed (tools register at startup).</p>
+
+<p><b>Troubleshooting:</b></p>
+<ul>
+<li>Glasses and server must be on the <b>same Wi-Fi network</b></li>
+<li>Default port is <code>18789</code> (WebSocket only) — <code>curl</code> will return 404; use <code>openclaw gateway call status --json</code> to test</li>
+<li>Run <code>openclaw devices list</code> frequently — pending approvals are the most common blocker</li>
+<li>If QR scanning doesn't work, use Method 2 (paste URL) or Method 3 (manual token)</li>
+<li>Run <code>openclaw doctor</code> on your server to diagnose issues</li>
+<li>After APK reinstall, SharedPreferences are wiped — re-apply endpoint, token, and enabled flag</li>
+<li>The token from <code>gateway.auth.token</code> is NOT the same as <code>gateway.remote.token</code> — use the auth token</li>
+</ul>`
+  },
+  liveai: {
+    title: 'Gemini Live Voice & AI',
+    body: `<p>These settings control the <b>Gemini 3.1 Flash Live</b> voice assistant that runs during camera/voice sessions.</p>
+<p><b>Live Voice:</b> Select the voice used during real-time Live conversations. These 8 voices are optimized for streaming and support interruptions. Preview them in <a href="https://aistudio.google.com" target="_blank" style="color:#00e5ff">Google AI Studio</a>.</p>
+<p><b>TTS Voice:</b> Select the voice used for text-to-speech responses (non-live). All 30 voices are available here, including the 8 Live voices plus 22 additional ones with different characteristics.</p>
+<p><b>Tweaking the voice:</b> You can customize how any voice sounds by adding instructions in the <b>Personality</b> field (Step 7). For example: "Speak calmly with a warm tone. Pause before key points." The voice selection picks the base voice; personality shapes how it speaks.</p>
+<p><b>Language Code:</b> Set a BCP-47 language code (e.g. <code>en-US</code>, <code>es-MX</code>, <code>ja-JP</code>) to hint the preferred spoken language. Leave blank for auto-detect.</p>
+<p><b>Thinking Level:</b> Controls how much internal reasoning the model does before responding. <code>None</code> = fastest, <code>Low</code>/<code>Medium</code> = balanced, <code>High</code> = most thorough but slower.</p>
+<p><b>Temperature:</b> Controls response randomness. 0 = deterministic, 1.0 = balanced (default), 2.0 = most creative. Leave at -1 to use the model default.</p>
+<p><b>Session Resumption:</b> When enabled, the model can resume a prior session context if the connection drops. Recommended to leave on.</p>
+<p><b>Context Window Compression:</b> When enabled, older parts of the conversation are compressed to fit more context. Target Tokens sets the sliding window size (0 = model default).</p>
+`
+  },
+  timeouts: {
+    title: 'Model Timeouts',
+    body: `<p>Set per-model timeout durations in seconds. If a model does not respond within the timeout, the request is cancelled.</p>
+<p><b>Live Idle Timeout:</b> How long the Live voice session stays open with no audio activity before auto-closing. Default: 120 seconds.</p>
+<p><b>Standard Gemini:</b> Timeout for regular generateContent calls. Default: 60 seconds.</p>
+<p><b>Research:</b> Timeout for research-routed calls. Default: 120 seconds (research responses tend to be longer).</p>
+<p><b>LearnLM:</b> Timeout for tutoring calls. Default: 90 seconds.</p>
+<p>Set to 0 to use the built-in default for that model.</p>`
+  },
+  accessibility: {
+    title: 'Accessibility',
+    body: `<p>Adjust how TapInsight displays information and reads responses to improve comfort and readability.</p>
+<p><b>HUD Font Scale:</b> Multiplier for on-glass text size. 1.0 = default. Increase to 1.5 or 2.0 for larger text.</p>
+<p><b>High Contrast:</b> Uses bolder colors and thicker outlines on the AR display for better visibility in bright environments.</p>
+<p><b>TTS Speech Rate:</b> Controls how fast spoken responses are read. 0.5 = slow, 1.0 = normal, 2.0 = fast.</p>
+<p><b>Auto-Read Responses:</b> When enabled, all text responses are automatically spoken aloud via TTS. When disabled, only voice-session responses are spoken.</p>`
   }
 };
 
@@ -560,41 +1391,586 @@ function swapHudOrder(fromIdx, toIdx) {
 function showHelp(key){const h=HELP[key];if(!h)return;document.getElementById('helpTitle').textContent=h.title;document.getElementById('helpBody').innerHTML=h.body;document.getElementById('helpModal').classList.add('show')}
 function closeHelp(){document.getElementById('helpModal').classList.remove('show')}
 function showStatus(msg,cls){const e=document.getElementById('status');e.textContent=msg;e.className='status '+(cls||'');if(cls==='ok')setTimeout(()=>{e.textContent=''},4000)}
-
-function hasBridge(){return typeof AiTapBridge!=='undefined'}
-
-function loadAll(){
-  if(!hasBridge()){showStatus('Open this page from within AITap on your glasses.','err');return}
-  for(const[id,cfg]of Object.entries(FIELDS)){
-    const el=document.getElementById(id);
-    try{el.value=AiTapBridge.getString(cfg.key)||''}catch(e){}
-  }
-  renderHudOrderList();
-  showStatus('Configuration loaded.','ok');
+function showToast(msg,cls){const t=document.getElementById('toast');t.textContent=msg;t.className='toast '+cls;requestAnimationFrame(()=>{t.classList.add('show')});clearTimeout(t._tid);t._tid=setTimeout(()=>{t.classList.remove('show')},cls==='err'?5000:3000)}
+function valuesEquivalent(expected, actual, type){
+  if(type==='float') return Math.abs(Number(expected||0) - Number(actual||0)) < 0.0001;
+  if(type==='int') return parseInt(expected||0,10) === parseInt(actual||0,10);
+  if(type==='bool') return Boolean(expected) === (actual === true || actual === 'true');
+  return String(expected ?? '') === String(actual ?? '');
 }
-function saveAll(){
-  if(!hasBridge()){showStatus('Open this page from within AITap on your glasses.','err');return}
+function collectConfigPayload(){
+  const payload={};
   for(const[id,cfg]of Object.entries(FIELDS)){
-    const el=document.getElementById(id);const v=el.value.trim();
-    try{
-      if(cfg.type==='float')AiTapBridge.putFloat(cfg.key,parseFloat(v)||0.8);
-      else if(cfg.type==='bool')AiTapBridge.putBoolean(cfg.key,v==='true');
-      else AiTapBridge.putString(cfg.key,v);
-    }catch(e){showStatus('Error: '+e.message,'err');return}
+    const el=document.getElementById(id); if(!el) continue;
+    const v=(el.value||'').trim();
+    if(cfg.type==='float') payload[cfg.key]=parseFloat(v)||0;
+    else if(cfg.type==='bool') payload[cfg.key]=(v==='true');
+    else if(cfg.type==='int') payload[cfg.key]=parseInt(v)||0;
+    else payload[cfg.key]=v;
   }
-  try{AiTapBridge.applyConfig()}catch(e){}
-  showStatus('Configuration saved! Restart AITap to apply.','ok');
+  return payload;
+}
+function verifySavedSettings(expected,saved){
+  const mismatches=[];
+  for(const cfg of Object.values(FIELDS)){
+    if(!(cfg.key in expected)) continue;
+    if(!valuesEquivalent(expected[cfg.key], saved?.[cfg.key], cfg.type)){
+      mismatches.push(cfg.key);
+    }
+  }
+  return mismatches;
+}
+
+function hasBridge(){return typeof AiTapBridge!=='undefined' && !AiTapBridge._isRestShim}
+function hasRestShimBridge(){return typeof AiTapBridge!=='undefined' && AiTapBridge._isRestShim===true}
+
+const RESEARCH_MODEL_PRESETS = {
+  gemini: {
+    fast: 'gemini-3-flash-preview',
+    balanced: 'gemini-3.1-pro-preview',
+    deep: 'gemini-3.1-pro-preview'
+  },
+  openai_codex: {
+    fast: 'gpt-5.2-codex',
+    balanced: 'gpt-5.2-codex',
+    deep: 'gpt-5.2-codex'
+  },
+  groq: {
+    fast: 'llama-3.1-8b-instant',
+    balanced: 'llama-3.3-70b-versatile',
+    deep: 'llama-3.3-70b-versatile'
+  }
+};
+
+function getResearchProvider() {
+  return document.getElementById('researchProvider')?.value || 'gemini';
+}
+
+function refreshResearchPresetHint() {
+  const provider = getResearchProvider();
+  const hint = document.getElementById('researchPresetHint');
+  if (!hint) return;
+  const presets = RESEARCH_MODEL_PRESETS[provider] || RESEARCH_MODEL_PRESETS.gemini;
+  const providerLabels = {
+    gemini: 'Gemini',
+    openai_codex: 'OpenAI Codex',
+    groq: 'Groq'
+  };
+  hint.textContent = `${providerLabels[provider] || 'Research'} presets: Fast = ${presets.fast}, Balanced = ${presets.balanced}, Deep = ${presets.deep}.`;
+}
+
+function applyResearchPreset(level) {
+  const provider = getResearchProvider();
+  const presets = RESEARCH_MODEL_PRESETS[provider] || RESEARCH_MODEL_PRESETS.gemini;
+  const model = presets[level];
+  if (!model) return;
+  document.getElementById('researchModel').value = model;
+  refreshResearchPresetHint();
+}
+
+function clearResearchModel() {
+  document.getElementById('researchModel').value = '';
+  refreshResearchPresetHint();
+}
+
+async function loadServerInfo(){
+  const statusEl = document.getElementById('serverInfoStatus');
+  const currentEl = document.getElementById('serverInfoCurrent');
+  const lanEl = document.getElementById('serverInfoLan');
+  const phoneEl = document.getElementById('serverInfoPhone');
+  const usbEl = document.getElementById('serverInfoUsb');
+  if(!statusEl) return;
+  statusEl.textContent = 'Detecting current companion connection...';
+  currentEl.innerHTML = '';
+  lanEl.innerHTML = '';
+  phoneEl.innerHTML = '';
+  usbEl.innerHTML = '';
+  try {
+    const r = await fetch('/api/server-info', {headers: apiHeaders()});
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const currentUrl = data.url || window.location.origin;
+    const lanIps = Array.isArray(data.lan_ips) ? data.lan_ips.filter(Boolean) : [];
+    const primaryIp = data.primary_lan_ip || '';
+    const phoneUrl = data.recommended_phone_url || (primaryIp ? ('https://' + primaryIp + ':' + window.location.port) : '');
+    const wifiUrl = data.recommended_wifi_url || (primaryIp ? ((data.scheme || window.location.protocol.replace(':','')) + '://' + primaryIp + ':' + window.location.port) : '');
+    const usbUrl = data.recommended_usb_url || ('http://localhost:' + window.location.port);
+    statusEl.innerHTML = 'Current connection detected.';
+    currentEl.innerHTML = '<b>Current:</b> <code>' + currentUrl + '</code>';
+    lanEl.innerHTML = primaryIp
+      ? '<b>Glasses LAN IP:</b> <code>' + primaryIp + '</code>' + (lanIps.length > 1 ? ' <span style="color:#777">(' + lanIps.join(', ') + ')</span>' : '')
+      : '<b>Glasses LAN IP:</b> <span style="color:#ffb14a">not detected yet</span>';
+    phoneEl.innerHTML = phoneUrl
+      ? '<b>Phone GPS bridge URL:</b> <code>' + phoneUrl + '</code>'
+      : '<b>Phone GPS bridge URL:</b> <span style="color:#ffb14a">open this page through the glasses LAN IP to use phone GPS</span>';
+    usbEl.innerHTML = '<b>USB companion URL:</b> <code>' + usbUrl + '</code>' + (wifiUrl && wifiUrl !== currentUrl ? '<br><b>Wi-Fi companion URL:</b> <code>' + wifiUrl + '</code>' : '');
+  } catch (e) {
+    statusEl.innerHTML = '<span style="color:#f44336">Could not detect glasses IP automatically:</span> ' + (e.message || e);
+  }
+}
+
+function toggleInterruptFields() {
+  const mode = document.querySelector('input[name="liveInterruptMode"]:checked')?.value || 'auto';
+  const fields = document.getElementById('interruptFields');
+  const hidden = document.getElementById('liveDisableInterrupt');
+  if (mode === 'disabled') {
+    fields.style.display = 'none';
+    hidden.value = 'true';
+  } else {
+    fields.style.display = '';
+    hidden.value = 'false';
+  }
+}
+function syncInterruptRadio() {
+  const val = document.getElementById('liveDisableInterrupt')?.value;
+  const radios = document.querySelectorAll('input[name="liveInterruptMode"]');
+  radios.forEach(r => { r.checked = (val === 'true') ? r.value === 'disabled' : r.value === 'auto'; });
+  toggleInterruptFields();
+}
+
+async function loadAll(){
+  if(hasBridge()){
+    // WebView bridge path (on-device)
+    for(const[id,cfg]of Object.entries(FIELDS)){
+      const el=document.getElementById(id);
+      try{el.value=AiTapBridge.getString(cfg.key)||''}catch(e){}
+    }
+  } else {
+    // REST API path (phone browser over HTTP)
+    try{
+      const r=await fetch('/api/config',{headers:apiHeaders()});
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const data=await r.json();
+      for(const[id,cfg]of Object.entries(FIELDS)){
+        const el=document.getElementById(id);
+        if(!el) continue;
+        const val=data[cfg.key];
+        if(val!==undefined&&val!==null){
+          if(cfg.type==='bool') el.value=String(val);
+          else el.value=String(val);
+        } else { el.value=''; }
+      }
+    }catch(e){showToast('Could not load config: '+e.message,'err');return}
+  }
+  syncInterruptRadio();
+  refreshResearchPresetHint();
+  renderHudOrderList();
+  await loadServerInfo();
+  updateClawConnectionStatus();
+  refreshPhoneLocationBridgeStatus();
+  syncPhoneLocationBridgeWatcher();
+  checkPhoneGpsPlatformSupport();
+  document.getElementById('researchProvider')?.addEventListener('change', refreshResearchPresetHint);
+  return true;
+}
+async function saveAll(){
+  const payload=collectConfigPayload();
+  const savedCount=Object.keys(FIELDS).length;
+  showStatus('Saving configuration...');
+  if(hasBridge()){
+    for(const[id,cfg]of Object.entries(FIELDS)){
+      const el=document.getElementById(id);const v=(el.value||'').trim();
+      try{
+        if(cfg.type==='float') AiTapBridge.putFloat(cfg.key,parseFloat(v)||0);
+        else if(cfg.type==='bool') AiTapBridge.putBoolean(cfg.key,v==='true');
+        else if(cfg.type==='int') AiTapBridge.putInt ? AiTapBridge.putInt(cfg.key,parseInt(v)||0) : AiTapBridge.putString(cfg.key,String(parseInt(v)||0));
+        else AiTapBridge.putString(cfg.key,v);
+      }catch(e){showToast('Save failed: '+e.message,'err');showStatus('Save failed.','err');return}
+    }
+    try{
+      const ok = AiTapBridge.applyConfig ? AiTapBridge.applyConfig() : true;
+      if(ok===false) throw new Error('Bridge save returned false');
+      showToast('Saved on glasses. Restart TapInsight to apply all changes.','ok');
+      showStatus('Configuration saved on glasses. Restart TapInsight to apply all changes.','ok');
+    }catch(e){showToast('Save failed: '+e.message,'err');showStatus('Save failed.','err');return}
+  } else {
+    try{
+      const r=await fetch('/api/config',{method:'POST',headers:apiHeaders(),body:JSON.stringify(payload)});
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const result=await r.json();
+      if(result.error) throw new Error(result.error);
+      const verified = result.verified === true;
+      const verificationMismatches = verifySavedSettings(payload, result.saved || {});
+      if(!verified || verificationMismatches.length){
+        const detail = verificationMismatches.length ? ' Mismatched: '+verificationMismatches.join(', ') : '';
+        throw new Error('Settings could not be verified after save.' + detail);
+      }
+      await loadAll();
+      const changedCount = Number(result.changedCount || 0);
+      const restartText = result.restartRecommended ? ' Restart TapInsight to apply all changes.' : '';
+      showToast('Saved and verified. ' + changedCount + ' setting' + (changedCount===1?'':'s') + ' changed.' + restartText,'ok');
+      showStatus('Configuration saved and verified.' + restartText,'ok');
+    }catch(e){showToast('Save failed: '+e.message,'err');showStatus('Save failed: '+e.message,'err');return}
+  }
+  syncPhoneLocationBridgeWatcher();
+  refreshPhoneLocationBridgeStatus();
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadAll();
+  showStatus('Configuration loaded.','ok');
+  checkOAuthStatus();
+  renderSkillGrid();
+});
+
+let phoneLocationWatchId = null;
+let phoneGpsLastSentAt = 0;           // Throttle: epoch-ms of last successful POST
+const PHONE_GPS_MIN_INTERVAL_MS = 15000; // Only POST every 15 s to avoid TLS-handshake CPU load on glasses
+let phoneGpsStatusRefreshCount = 0;   // Throttle status panel refresh to every 4th send (~60 s)
+
+function isIosSafari(){
+  const ua = navigator.userAgent || '';
+  const isAppleMobile = /iPhone|iPad|iPod/.test(ua);
+  const isWebKit = /WebKit/i.test(ua);
+  const isOtherBrowser = /CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);
+  return isAppleMobile && isWebKit && !isOtherBrowser;
+}
+function isIosDevice(){
+  return /iPhone|iPad|iPod/.test(navigator.userAgent || '');
+}
+/** Get auth headers for API requests (includes session token when served by CompanionServer). */
+function apiHeaders(extra){
+  const h = {'Content-Type':'application/json'};
+  if(typeof AiTapBridge !== 'undefined' && AiTapBridge._token) h['X-Session-Token'] = AiTapBridge._token;
+  return Object.assign(h, extra || {});
+}
+
+function phoneLocationBridgeBlockedReason(){
+  if(!navigator.geolocation){
+    return 'This browser does not support the Geolocation API.';
+  }
+  // Since Chrome 50 (2016), Firefox 55, and Safari 10, ALL major browsers require HTTPS
+  // (a "secure context") for the Geolocation API. localhost/127.0.0.1 are exempt, but
+  // LAN IPs like 192.168.x.x are NOT secure contexts over HTTP.
+  if(!window.isSecureContext){
+    if(isIosDevice()){
+      return 'All iPhone browsers block GPS sharing on non-HTTPS pages (Apple requires all iOS browsers to use WebKit). This companion page is HTTP, not HTTPS.';
+    }
+    return 'This browser blocks GPS sharing because this page is not HTTPS. Since 2016, all major browsers (Chrome, Firefox, Safari, Edge) require a secure context (HTTPS) for the Geolocation API. LAN addresses like ' + window.location.hostname + ' over HTTP are not secure contexts.';
+  }
+  return '';
+}
+
+function checkPhoneGpsPlatformSupport(){
+  var noticeEl = document.getElementById('gpsBridgeSecurityNotice');
+  var blockedReason = phoneLocationBridgeBlockedReason();
+  if(window.isSecureContext){
+    // HTTPS is working — show green notice
+    if(noticeEl){
+      noticeEl.style.color = '#66bb6a';
+      noticeEl.innerHTML = '<b>&#10003; Secure connection (HTTPS):</b> Browser GPS sharing is supported. You may need to accept the self-signed certificate warning once per device.';
+    }
+  } else {
+    // Not a secure context — show warning with instructions
+    if(noticeEl){
+      noticeEl.style.color = '#ffb14a';
+      noticeEl.innerHTML = '<b>&#9888; Insecure connection:</b> Browser GPS is blocked because this page is not HTTPS. '
+        + 'Try accessing this page via <b>https://' + window.location.hostname + ':' + window.location.port + '</b> and accept the self-signed certificate warning. '
+        + 'If HTTPS is unavailable, a native app can still POST to <code>/api/phone-location</code>.';
+    }
+    if(blockedReason){
+      var statusEl = document.getElementById('phoneLocationBridgeStatus');
+      if(statusEl){
+        statusEl.innerHTML = '<div style="border:2px solid #f44336;border-radius:8px;padding:10px;background:#1a0000">'
+          + '<b style="color:#f44336">&#9888; Browser GPS blocked:</b> ' + blockedReason
+          + '<br><br><b style="color:#ffb14a">Fix:</b> Make sure you are accessing this page via <b>https://</b> (not http://). '
+          + 'Accept the self-signed certificate warning in your browser, then refresh this page.'
+          + '<br><br><b style="color:#aaa">Alternative:</b> A native GPS-sharing app can POST coordinates to <code>' + window.location.protocol + '//' + window.location.host + '/api/phone-location</code></div>';
+        statusEl.style.borderColor = '#f44336';
+      }
+    }
+  }
+}
+
+function setPhoneBridgePanelMessage(message){
+  const el = document.getElementById('phoneLocationBridgeStatus');
+  if(el && message){
+    el.innerHTML = message;
+  }
+}
+
+async function handlePhoneLocationBridgeModeChange(){
+  const sel = document.getElementById('phoneLocationBridgeEnabled');
+  const enabled = sel?.value === 'true';
+  console.log('[PhoneGPS] Mode changed: enabled=' + enabled);
+  // Immediate visual feedback while saving
+  setPhoneBridgePanelMessage(enabled
+    ? '<span style="color:#64b5f6">Saving phone GPS bridge setting to glasses...</span>'
+    : '<span style="color:#64b5f6">Turning off phone GPS bridge...</span>');
+  try {
+    const ok = await persistPhoneLocationBridgeEnabled(enabled);
+    console.log('[PhoneGPS] persistPhoneLocationBridgeEnabled returned: ' + ok);
+    if(!ok){
+      showStatus('Failed to save phone GPS bridge setting.','err');
+      setPhoneBridgePanelMessage('<span style="color:#f44336;font-weight:700">&#9888; Failed to save phone GPS bridge setting.</span><br>The glasses may not be reachable. Check your WiFi connection and try again.');
+      sel.value = enabled ? 'false' : 'true'; // revert dropdown
+      return;
+    }
+  } catch(e) {
+    console.error('[PhoneGPS] Save error:', e);
+    showStatus('Failed to save: ' + (e.message || e),'err');
+    setPhoneBridgePanelMessage('<span style="color:#f44336;font-weight:700">&#9888; Save failed:</span> ' + (e.message || e) + '<br>Check your WiFi connection and try again.');
+    sel.value = enabled ? 'false' : 'true'; // revert dropdown
+    return;
+  }
+  if(!enabled){
+    stopPhoneLocationWatch();
+    try{
+      await fetch('/api/phone-location', {
+        method:'POST',
+        headers: apiHeaders(),
+        body: JSON.stringify({ clear:true })
+      });
+    }catch(e){ console.warn('[PhoneGPS] Clear error (non-critical):', e); }
+    setPhoneBridgePanelMessage('Phone GPS bridge is <b style="color:#ffb14a">off</b>. Existing glasses location services remain unchanged.');
+    showStatus('Phone GPS bridge module turned off.','ok');
+    return;
+  }
+  // Check platform support BEFORE showing success
+  const blockedReason = phoneLocationBridgeBlockedReason();
+  if(blockedReason){
+    setPhoneBridgePanelMessage('<div style="border:2px solid #f44336;border-radius:8px;padding:10px;background:#1a0000">'
+      + '<b style="color:#00e676">&#10003; Phone GPS bridge is ON</b> (saved to glasses)<br><br>'
+      + '<b style="color:#f44336">&#9888; Browser GPS blocked:</b><br>' + blockedReason
+      + '<br><br><b style="color:#ffb14a">Alternative:</b> Use a native GPS app that POSTs to <code>/api/phone-location</code>, or rely on the glasses\' own location providers.</div>');
+    showStatus('Phone GPS bridge on — but browser GPS is blocked (HTTPS required). See details below.','err');
+    return;
+  }
+  setPhoneBridgePanelMessage('Phone GPS bridge module is <b style="color:#00e676">on</b>.<br><br>Next: tap <b>Use This Phone\'s GPS</b> below to request phone location access and send the first fix.');
+  showStatus('Phone GPS bridge module turned on. Tap Use This Phone\'s GPS next.','ok');
+  await refreshPhoneLocationBridgeStatus();
+}
+
+async function refreshPhoneLocationBridgeStatus(){
+  const el = document.getElementById('phoneLocationBridgeStatus');
+  if(!el) return;
+  console.log('[PhoneGPS] refreshPhoneLocationBridgeStatus() called');
+  try{
+    const r = await fetch('/api/phone-location/status', {headers: apiHeaders()});
+    if(!r.ok){ el.innerHTML = '<span style="color:#f44336">&#9888; Could not reach glasses (HTTP ' + r.status + '). Check WiFi connection.</span>'; return; }
+    const data = await r.json();
+    console.log('[PhoneGPS] Status response:', JSON.stringify(data));
+    const enabled = data.enabled === true;
+    const hasLocation = data.has_location === true;
+    const accuracy = data.accuracy_meters != null ? `${Math.round(data.accuracy_meters)} m` : 'unknown';
+    const age = data.age_seconds != null ? `${data.age_seconds}s ago` : 'no recent fix';
+    // Sync dropdown to match server state
+    var sel = document.getElementById('phoneLocationBridgeEnabled');
+    if(sel) sel.value = enabled ? 'true' : 'false';
+    if(!enabled){
+      el.innerHTML = 'Phone GPS bridge is <b style="color:#ffb14a">off</b>. Existing glasses location services remain unchanged.';
+      el.style.borderColor = '#333';
+      return;
+    }
+    if(!hasLocation){
+      const blockedReason = phoneLocationBridgeBlockedReason();
+      if(blockedReason){
+        el.innerHTML = '<div style="border:2px solid #f44336;border-radius:8px;padding:10px;background:#1a0000">'
+          + 'Phone GPS bridge is <b style="color:#00e676">on</b> (on glasses), but <b style="color:#f44336">browser GPS is blocked</b> (HTTPS required).<br><br>' + blockedReason
+          + '<br><br><b style="color:#ffb14a">Alternative:</b> Use a native GPS app or rely on glasses\' own location.</div>';
+      }else{
+        el.innerHTML = 'Phone GPS bridge is <b style="color:#00e676">on</b>, but no phone fix has been sent yet.<br>Tap <b>Use This Phone\'s GPS</b> and allow location access on this phone.';
+      }
+      el.style.borderColor = '#f57c00';
+      return;
+    }
+    el.innerHTML = '<div style="border:2px solid #00e676;border-radius:8px;padding:10px;background:#001a0a">'
+      + 'Phone GPS bridge is <b style="color:#00e676">active &#10003;</b><br>'
+      + 'Provider: <b>' + (data.provider || 'companion_phone') + '</b><br>'
+      + 'Lat/Lng: ' + Number(data.latitude).toFixed(6) + ', ' + Number(data.longitude).toFixed(6) + '<br>'
+      + 'Accuracy: ' + accuracy + '<br>'
+      + 'Updated: ' + age + '</div>';
+    el.style.borderColor = '#00e676';
+  }catch(e){
+    console.error('[PhoneGPS] Status fetch error:', e);
+    el.innerHTML = '<span style="color:#f44336">&#9888; Phone GPS bridge status unavailable:</span> ' + (e.message || e) + '<br>Check that this phone is on the same WiFi as the glasses.';
+    el.style.borderColor = '#f44336';
+  }
+}
+
+async function persistPhoneLocationBridgeEnabled(enabled){
+  console.log('[PhoneGPS] persistPhoneLocationBridgeEnabled(' + enabled + ')');
+  document.getElementById('phoneLocationBridgeEnabled').value = enabled ? 'true' : 'false';
+  AiTapBridge.putBoolean('phone_location_bridge_enabled', enabled);
+  const ok = await AiTapBridge.applyConfig();
+  console.log('[PhoneGPS] applyConfig result:', ok);
+  return ok;
+}
+
+async function sendPhoneLocation(position){
+  const c = position.coords;
+  const payload = {
+    latitude: c.latitude,
+    longitude: c.longitude,
+    accuracy_meters: Number.isFinite(c.accuracy) ? c.accuracy : null,
+    altitude_meters: Number.isFinite(c.altitude) ? c.altitude : null,
+    speed_mps: Number.isFinite(c.speed) ? c.speed : null,
+    bearing_deg: Number.isFinite(c.heading) ? c.heading : null,
+    timestamp_ms: position.timestamp || Date.now()
+  };
+  const r = await fetch('/api/phone-location', {
+    method:'POST',
+    headers: apiHeaders(),
+    body: JSON.stringify(payload)
+  });
+  return await r.json();
+}
+
+function stopPhoneLocationWatch(){
+  if(phoneLocationWatchId !== null && navigator.geolocation){
+    navigator.geolocation.clearWatch(phoneLocationWatchId);
+  }
+  phoneLocationWatchId = null;
+}
+
+function requestInitialPhoneLocationFix(){
+  return new Promise((resolve, reject) => {
+    if(!navigator.geolocation){
+      reject(new Error('This phone browser does not support location sharing.'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 12000
+    });
+  });
+}
+
+function startPhoneLocationWatch(){
+  if(phoneLocationWatchId !== null) return true;
+  const blockedReason = phoneLocationBridgeBlockedReason();
+  if(blockedReason){
+    showStatus(blockedReason,'err');
+    setPhoneBridgePanelMessage(blockedReason);
+    return false;
+  }
+  phoneLocationWatchId = navigator.geolocation.watchPosition(async position => {
+    // Throttle: only POST to the glasses every PHONE_GPS_MIN_INTERVAL_MS to avoid
+    // hammering the NanoHTTPD TLS server and starving the audio thread on the X3 Pro.
+    const now = Date.now();
+    if (now - phoneGpsLastSentAt < PHONE_GPS_MIN_INTERVAL_MS) return;
+    try{
+      await sendPhoneLocation(position);
+      phoneGpsLastSentAt = now;
+      // Only refresh the status UI panel every ~60 s (every 4th send) instead of
+      // every GPS callback — it's a second HTTPS request we don't need often.
+      if (++phoneGpsStatusRefreshCount % 4 === 0) refreshPhoneLocationBridgeStatus();
+    }catch(e){
+      showStatus('Failed to send phone GPS: ' + e.message,'err');
+    }
+  }, error => {
+    showStatus('Phone GPS error: ' + error.message,'err');
+  }, { enableHighAccuracy:true, maximumAge:10000, timeout:15000 });
+  return true;
+}
+
+function syncPhoneLocationBridgeWatcher(){
+  const enabled = document.getElementById('phoneLocationBridgeEnabled')?.value === 'true';
+  if(!enabled){
+    stopPhoneLocationWatch();
+    return;
+  }
+  startPhoneLocationWatch();
+}
+
+async function enablePhoneLocationBridge(){
+  console.log('[PhoneGPS] enablePhoneLocationBridge() called');
+  // Check platform support FIRST, before doing anything else
+  const blockedReason = phoneLocationBridgeBlockedReason();
+  if(blockedReason){
+    console.warn('[PhoneGPS] Platform blocked:', blockedReason);
+    showStatus('Browser GPS blocked — HTTPS required. See details below.','err');
+    setPhoneBridgePanelMessage('<div style="border:2px solid #f44336;border-radius:8px;padding:10px;background:#1a0000">'
+      + '<b style="color:#f44336">&#9888; Browser GPS blocked</b><br><br>' + blockedReason
+      + '<br><br><b style="color:#ffb14a">Alternative:</b> Use a native GPS app that POSTs to <code>http://' + window.location.host + '/api/phone-location</code>, or rely on the glasses\' own location providers.</div>');
+    return;
+  }
+  setPhoneBridgePanelMessage('<span style="color:#64b5f6">Enabling phone GPS bridge on glasses...</span>');
+  try {
+    const ok = await persistPhoneLocationBridgeEnabled(true);
+    console.log('[PhoneGPS] persistPhoneLocationBridgeEnabled returned:', ok);
+    if(!ok){
+      showStatus('Failed to enable phone GPS bridge.','err');
+      setPhoneBridgePanelMessage('<span style="color:#f44336;font-weight:700">&#9888; Failed to enable phone GPS bridge.</span><br>Check that the glasses are connected and try again.');
+      return;
+    }
+  } catch(e) {
+    console.error('[PhoneGPS] Enable error:', e);
+    showStatus('Failed to enable: ' + (e.message || e),'err');
+    setPhoneBridgePanelMessage('<span style="color:#f44336;font-weight:700">&#9888; Enable failed:</span> ' + (e.message || e));
+    return;
+  }
+  // Update dropdown to reflect enabled state
+  var sel = document.getElementById('phoneLocationBridgeEnabled');
+  if(sel) sel.value = 'true';
+  stopPhoneLocationWatch();
+  try{
+    setPhoneBridgePanelMessage('Phone GPS bridge is <b style="color:#00e676">on</b>.<br><br><span style="color:#64b5f6">Requesting the first GPS fix from this phone...</span><br>You may see a browser permission prompt — please allow location access.');
+    showStatus('Phone GPS bridge enabled. Requesting phone location...','ok');
+    const position = await requestInitialPhoneLocationFix();
+    console.log('[PhoneGPS] Got initial fix:', position.coords.latitude, position.coords.longitude);
+    await sendPhoneLocation(position);
+    await refreshPhoneLocationBridgeStatus();
+    startPhoneLocationWatch();
+    showStatus('Phone GPS bridge active! Location streaming to glasses.','ok');
+  }catch(e){
+    console.error('[PhoneGPS] Location error:', e);
+    const code = e && e.code;
+    let message = 'Phone GPS error: ' + (e && e.message ? e.message : String(e));
+    if(code === 1) message = 'Location permission denied. Please allow location access in your browser settings and try again.';
+    else if(code === 2) message = 'Location unavailable. Make sure GPS/location services are enabled on this phone.';
+    else if(code === 3) message = 'Location request timed out. Try again in an open area with better GPS signal.';
+    showStatus(message,'err');
+    const extra = !window.isSecureContext
+      ? '<br><br><b style="color:#f44336">Root cause:</b> This page is not using HTTPS. Try accessing via <b>https://' + window.location.hostname + ':' + window.location.port + '</b> and accept the self-signed certificate warning, then try again.'
+      : '';
+    setPhoneBridgePanelMessage('<span style="color:#f44336;font-weight:700">&#9888; ' + message + '</span>' + extra);
+  }
+}
+
+async function disablePhoneLocationBridge(){
+  stopPhoneLocationWatch();
+  await persistPhoneLocationBridgeEnabled(false);
+  try{
+    await fetch('/api/phone-location', {
+      method:'POST',
+      headers: apiHeaders(),
+      body: JSON.stringify({ clear:true })
+    });
+  }catch(e){}
+  refreshPhoneLocationBridgeStatus();
+  showStatus('Phone GPS bridge disabled. Existing glasses location services remain active.','ok');
 }
 
 // ── OAuth ───────────────────────────────────────────────────────
-const OAUTH_REDIRECT_URI = 'http://localhost';
+// Always use localhost for the redirect URI — Google Cloud won't accept private IPs.
+// When the user is accessing the companion app from another device (phone/laptop),
+// the redirect to localhost will land on a blank page, but the auth code will be
+// in the URL bar for them to copy-paste back here.
+const OAUTH_REDIRECT_URI = 'http://localhost:19110/oauth/callback';
+let oauthPollTimer = null;
 
+// Show the user exactly which redirect URI to add in Google Cloud
+(function populateRedirectHint() {
+  const el = document.getElementById('oauthRedirectHint');
+  if (el) el.textContent = OAUTH_REDIRECT_URI;
+})();
+
+// Show the step-by-step OAuth flow panel
+function startOAuthFlow() {
+  const clientId = document.getElementById('googleOAuthClientId').value.trim();
+  if (!clientId) { showStatus('Enter your OAuth Client ID first.', 'err'); return; }
+  saveAll();
+  document.getElementById('oauthFlowPanel').style.display = 'block';
+  // Scroll the panel into view
+  document.getElementById('oauthFlowPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// Actually open Google sign-in (Step 1 button)
 function authorizeGoogle() {
   const clientId = document.getElementById('googleOAuthClientId').value.trim();
   if (!clientId) { showStatus('Enter your OAuth Client ID first.', 'err'); return; }
-
-  // Save config first so the server has the client ID + secret
-  saveAll();
 
   const scopes = [
     'https://www.googleapis.com/auth/calendar.readonly',
@@ -602,6 +1978,7 @@ function authorizeGoogle() {
     'https://www.googleapis.com/auth/tasks.readonly',
     'https://www.googleapis.com/auth/tasks'
   ];
+
   const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' +
     'client_id=' + encodeURIComponent(clientId) +
     '&redirect_uri=' + encodeURIComponent(OAUTH_REDIRECT_URI) +
@@ -612,11 +1989,29 @@ function authorizeGoogle() {
 
   window.open(authUrl, '_blank');
 
-  // Show the code entry section
-  document.getElementById('codeEntrySection').style.display = 'block';
+  // Activate steps 2 and 3 so the user knows what to do next
+  document.getElementById('oauthStep2').style.opacity = '1';
+  document.getElementById('oauthStep3').style.opacity = '1';
+  document.getElementById('oauthCodeInput').focus();
+
   const statusEl = document.getElementById('oauthStatus');
-  statusEl.textContent = 'Waiting for code...';
+  statusEl.textContent = 'Follow the steps below...';
   statusEl.style.color = '#ff9800';
+  startOAuthStatusPolling();
+}
+
+function startOAuthStatusPolling() {
+  if (oauthPollTimer) clearInterval(oauthPollTimer);
+  let attempts = 0;
+  oauthPollTimer = setInterval(async () => {
+    attempts += 1;
+    await checkOAuthStatus();
+    const statusEl = document.getElementById('oauthStatus');
+    if (statusEl.textContent === 'Authorized' || attempts >= 30) {
+      clearInterval(oauthPollTimer);
+      oauthPollTimer = null;
+    }
+  }, 2000);
 }
 
 async function submitOAuthCode() {
@@ -641,7 +2036,7 @@ async function submitOAuthCode() {
   try {
     const r = await fetch('/api/oauth/exchange', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: apiHeaders(),
       body: JSON.stringify({ code: code, redirect_uri: OAUTH_REDIRECT_URI })
     });
     const result = await r.json();
@@ -650,7 +2045,7 @@ async function submitOAuthCode() {
       submitStatus.style.color = '#4caf50';
       document.getElementById('oauthStatus').textContent = 'Authorized';
       document.getElementById('oauthStatus').style.color = '#4caf50';
-      document.getElementById('codeEntrySection').style.display = 'none';
+      document.getElementById('oauthFlowPanel').style.display = 'none';
     } else {
       submitStatus.textContent = result.error || 'Exchange failed. Check Client ID and Secret.';
       submitStatus.style.color = '#f44336';
@@ -664,7 +2059,7 @@ async function submitOAuthCode() {
 async function checkOAuthStatus() {
   const statusEl = document.getElementById('oauthStatus');
   try {
-    const r = await fetch('/api/oauth/status');
+    const r = await fetch('/api/oauth/status', {headers: apiHeaders()});
     if (r.ok) {
       const s = await r.json();
       if (s.authorized) {
@@ -688,7 +2083,7 @@ async function verifyApi(apiType) {
   resultsDiv.innerHTML = '<span style="color:#ff9800">Testing ' + apiType + '...</span>';
 
   try {
-    const r = await fetch('/api/verify/' + apiType);
+    const r = await fetch('/api/verify/' + apiType, {headers: apiHeaders()});
     if (!r.ok) {
       resultsDiv.innerHTML = '<span style="color:#f44336">HTTP error: ' + r.status + '</span>';
       return;
@@ -714,7 +2109,7 @@ async function loadCalendarList() {
   container.innerHTML = '<span style="color:#ff9800">Loading calendars...</span>';
 
   try {
-    const r = await fetch('/api/calendars');
+    const r = await fetch('/api/calendars', {headers: apiHeaders()});
     if (!r.ok) { container.innerHTML = '<span style="color:#f44336">HTTP error: ' + r.status + '</span>'; return; }
     const data = await r.json();
 
@@ -791,8 +2186,309 @@ function updateCalendarSelections() {
   document.getElementById('calendarItemCounts').value = JSON.stringify(counts);
 }
 
+// ── Skill Manager ──────────────────────────────────────────────
+const SKILL_REGISTRY = {
+  google_calendar:   { label: 'Google Calendar',     icon: '📅', category: 'productivity', always: true },
+  google_tasks:      { label: 'Google Tasks',         icon: '✅', category: 'productivity', always: true },
+  google_keep:       { label: 'Google Keep Notes',    icon: '📝', category: 'productivity', always: true },
+  google_contacts:   { label: 'Google Contacts',      icon: '👤', category: 'communication', always: true },
+  google_routes:     { label: 'Routes & Traffic',     icon: '🗺️', category: 'navigation', always: true },
+  google_places:     { label: 'Nearby Places',        icon: '📍', category: 'navigation', always: true },
+  google_air_quality:{ label: 'Air Quality',           icon: '🌬️', category: 'environment', always: true },
+  ask_maps:          { label: 'Ask Maps (3D Nav)',    icon: '🌐', category: 'navigation', always: true },
+  daily_briefing:    { label: 'Daily Briefing',        icon: '☀️', category: 'productivity', always: true },
+  research_topic:    { label: 'Research',              icon: '🔬', category: 'knowledge', always: true },
+  learn_topic:       { label: 'LearnLM Tutor',        icon: '🎓', category: 'knowledge', always: true },
+  translate_text:    { label: 'Translation',           icon: '🌐', category: 'language', always: true },
+  battery_saver:     { label: 'Battery Saver',         icon: '🔋', category: 'system', always: true },
+  quick_action:      { label: 'Quick Actions',         icon: '⚡', category: 'productivity', always: true },
+  spotify_player:    { label: 'Spotify Player',        icon: '🎵', category: 'media', always: true },
+  sonos_control:     { label: 'Sonos Control',         icon: '🔊', category: 'media', always: true },
+  send_message:      { label: 'Send Message',          icon: '💬', category: 'communication', always: true },
+  place_call:        { label: 'Place Call',             icon: '📞', category: 'communication', always: true },
+  camera_action:     { label: 'Camera',                icon: '📷', category: 'system', always: true },
+  open_taplink:      { label: 'TapBrowser',            icon: '🔗', category: 'web', always: true },
+  get_context:       { label: 'Context Memory',        icon: '🧠', category: 'knowledge', always: true },
+  tapclaw_agent:     { label: 'TapClaw Agent',        icon: '🦞', category: 'agent', always: false, configSection: null, externalPage: '/openclaw' },
+  google_news:       { label: 'Google News',           icon: '📰', category: 'knowledge', always: true }
+};
+
+const SKILL_CATEGORIES = {
+  productivity: { label: 'Productivity', color: '#00e5ff' },
+  navigation:   { label: 'Navigation',   color: '#ff9800' },
+  communication:{ label: 'Communication', color: '#e91e63' },
+  media:        { label: 'Media',         color: '#9c27b0' },
+  knowledge:    { label: 'Knowledge',     color: '#4caf50' },
+  language:     { label: 'Language',      color: '#03a9f4' },
+  environment:  { label: 'Environment',   color: '#8bc34a' },
+  system:       { label: 'System',        color: '#607d8b' },
+  web:          { label: 'Web',           color: '#ff5722' },
+  agent:        { label: 'Agent',         color: '#00e676' }
+};
+
+function renderSkillGrid() {
+  const grid = document.getElementById('skillGrid');
+  if (!grid) return;
+  const categories = {};
+  for (const [id, skill] of Object.entries(SKILL_REGISTRY)) {
+    const cat = skill.category || 'system';
+    if (!categories[cat]) categories[cat] = [];
+    categories[cat].push({ id, ...skill });
+  }
+  let html = '';
+  for (const [catId, catInfo] of Object.entries(SKILL_CATEGORIES)) {
+    const skills = categories[catId];
+    if (!skills || !skills.length) continue;
+    html += `<div style="margin-bottom:14px">
+      <div style="font-size:11px;font-weight:600;color:${catInfo.color};text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px">${catInfo.label}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">`;
+    for (const skill of skills) {
+      const active = skill.always || (skill.id === 'tapclaw_agent' && AiTapBridge.getString('openclaw_enabled') === 'true');
+      const statusColor = active ? '#00e676' : '#555';
+      const statusText = active ? 'Active' : 'Disabled';
+      const configBtn = skill.externalPage
+        ? `<a href="${skill.externalPage}" style="color:#00e5ff;font-size:10px;text-decoration:none">Configure →</a>`
+        : skill.configSection
+        ? `<span style="color:#00e5ff;cursor:pointer;font-size:10px" onclick="document.getElementById('${skill.configSection}').scrollIntoView({behavior:'smooth'})">Configure</span>`
+        : '';
+      html += `<div style="background:#111;border-radius:6px;padding:8px 10px;border:1px solid #222;display:flex;align-items:center;gap:8px">
+        <span style="font-size:18px">${skill.icon}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${skill.label}</div>
+          <div style="font-size:10px;color:${statusColor}">${statusText} ${configBtn}</div>
+        </div>
+      </div>`;
+    }
+    html += '</div></div>';
+  }
+  grid.innerHTML = html;
+}
+
+// ── QR Code Scanner ──────────────────────────────────────────
+let qrScanMode = null; // 'skill' or 'claw'
+let qrStream = null;
+let qrAnimFrame = null;
+let qrDetector = null;
+const hasBarcodeDetector = ('BarcodeDetector' in window);
+
+async function startQrScan(mode) {
+  qrScanMode = mode;
+  const modal = document.getElementById('qrModal');
+  const video = document.getElementById('qrVideo');
+  const title = document.getElementById('qrModalTitle');
+  const desc = document.getElementById('qrModalDesc');
+  const status = document.getElementById('qrStatus');
+  const videoWrap = document.getElementById('qrVideoWrap');
+  const fallbackWrap = document.getElementById('qrFallbackWrap');
+
+  title.textContent = mode === 'claw' ? 'Scan TapClaw QR Code' : 'Scan Skill QR Code';
+  status.textContent = '';
+  status.style.color = '#888';
+  modal.classList.add('show');
+
+  if (hasBarcodeDetector) {
+    // Chrome / Android — use live camera scanning
+    videoWrap.style.display = 'block';
+    fallbackWrap.style.display = 'none';
+    desc.textContent = 'Point your phone camera at the QR code';
+    status.textContent = 'Starting camera...';
+    try {
+      qrDetector = new BarcodeDetector({ formats: ['qr_code'] });
+      qrStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } }
+      });
+      video.srcObject = qrStream;
+      await video.play();
+      status.textContent = 'Scanning... point camera at QR code';
+      scanQrFrame();
+    } catch (err) {
+      status.textContent = 'Camera access denied. Allow camera permission and try again.';
+      status.style.color = '#f44336';
+    }
+  } else {
+    // iOS Safari / other browsers — show photo capture + paste fallback
+    videoWrap.style.display = 'none';
+    fallbackWrap.style.display = 'block';
+    desc.textContent = 'Live scanning not available on this browser';
+    // Reset inputs
+    document.getElementById('qrPasteInput').value = '';
+    document.getElementById('qrPhotoInput').value = '';
+  }
+}
+
+function scanQrFrame() {
+  const video = document.getElementById('qrVideo');
+  const canvas = document.getElementById('qrCanvas');
+  const ctx = canvas.getContext('2d');
+
+  if (!qrStream || !video.videoWidth) {
+    qrAnimFrame = requestAnimationFrame(scanQrFrame);
+    return;
+  }
+
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  ctx.drawImage(video, 0, 0);
+
+  // Use the pre-created BarcodeDetector instance (avoids creating one per frame)
+  qrDetector.detect(canvas).then(codes => {
+    if (codes.length > 0) {
+      handleQrResult(codes[0].rawValue);
+      return;
+    }
+    qrAnimFrame = requestAnimationFrame(scanQrFrame);
+  }).catch(() => {
+    qrAnimFrame = requestAnimationFrame(scanQrFrame);
+  });
+}
+
+// Handle photo capture on iOS fallback
+document.addEventListener('DOMContentLoaded', function() {
+  const photoInput = document.getElementById('qrPhotoInput');
+  if (photoInput) {
+    photoInput.addEventListener('change', async function(e) {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const status = document.getElementById('qrStatus');
+      status.textContent = 'Processing photo...';
+      status.style.color = '#888';
+      try {
+        const bitmap = await createImageBitmap(file);
+        const canvas = document.getElementById('qrCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        ctx.drawImage(bitmap, 0, 0);
+        // Try BarcodeDetector on the captured image (some browsers support it on images but not live video)
+        if (hasBarcodeDetector) {
+          const det = new BarcodeDetector({ formats: ['qr_code'] });
+          const codes = await det.detect(canvas);
+          if (codes.length > 0) {
+            handleQrResult(codes[0].rawValue);
+            return;
+          }
+        }
+        status.innerHTML = 'Could not read QR code from photo. Try <b>Option 1</b> (Camera app) or paste the URL below.';
+        status.style.color = '#ffb14a';
+      } catch (err) {
+        status.textContent = 'Failed to process photo: ' + err.message;
+        status.style.color = '#f44336';
+      }
+    });
+  }
+});
+
+function handleQrPaste() {
+  const input = document.getElementById('qrPasteInput');
+  const val = (input.value || '').trim();
+  if (!val) {
+    document.getElementById('qrStatus').textContent = 'Please paste a URL or QR data first.';
+    document.getElementById('qrStatus').style.color = '#f44336';
+    return;
+  }
+  handleQrResult(val);
+}
+
+function handleQrResult(data) {
+  stopQrScan();
+  if (qrScanMode === 'claw') {
+    applyClawQr(data);
+  } else {
+    applySkillQr(data);
+  }
+}
+
+function stopQrScan() {
+  if (qrStream) {
+    qrStream.getTracks().forEach(t => t.stop());
+    qrStream = null;
+  }
+  if (qrAnimFrame) {
+    cancelAnimationFrame(qrAnimFrame);
+    qrAnimFrame = null;
+  }
+  document.getElementById('qrModal').classList.remove('show');
+}
+
+// ── TapClaw functions moved to /openclaw page ───────────────
+
+// ── Skill QR Code Handler (kept here) ────────────────────────
+// Stub functions so QR scanner 'claw' mode doesn't break if somehow called
+function applyClawQr() { showToast('TapClaw settings moved to OpenClaw tab. Redirecting…', 'ok'); setTimeout(function(){ window.location.href = '/openclaw'; }, 1200); }
+function applyClawSetupUrl() { applyClawQr(); }
+function testClawConnection() { applyClawQr(); }
+function startClawPairing() { applyClawQr(); }
+function checkRelayStatus() { applyClawQr(); }
+function checkCfTunnel() { applyClawQr(); }
+function viewSavedImages() { applyClawQr(); }
+function updateClawConnectionStatus() {}
+
+// (old TapClaw code removed — all functions are stubs above, real implementations in /openclaw)
+// ── Skill QR Code Handler ─────────────────────────────────────
+function applySkillQr(data) {
+  const result = document.getElementById('qrSkillResult');
+  result.style.display = 'block';
+
+  try {
+    let config = {};
+    if (data.trim().startsWith('{')) {
+      config = JSON.parse(data);
+    } else if (data.includes('tapinsight://skill?')) {
+      const url = new URL(data.replace('tapinsight://', 'https://tapinsight/'));
+      config.name = url.searchParams.get('name') || '';
+      config.type = url.searchParams.get('type') || '';
+      config.settings = {};
+      for (const [k, v] of url.searchParams) {
+        if (k !== 'name' && k !== 'type') config.settings[k] = v;
+      }
+    } else {
+      throw new Error('Unrecognized QR code format');
+    }
+
+    if (config.type === 'openclaw' || config.name === 'openclaw') {
+      // Redirect to TapClaw setup
+      applyClawQr(data);
+      return;
+    }
+
+    // For custom quick actions
+    if (config.type === 'quick_action' && config.name) {
+      const existing = document.getElementById('quickActionsJson')?.value?.trim();
+      let actions = [];
+      try { if (existing) actions = JSON.parse(existing); } catch (e) {}
+      actions.push({
+        name: config.name,
+        description: config.description || 'Custom skill via QR',
+        steps: config.steps || []
+      });
+      document.getElementById('quickActionsJson').value = JSON.stringify(actions, null, 2);
+      result.innerHTML = '<span style="color:#00e676">&#10003; Quick action added:</span> <b>' + config.name + '</b>'
+        + '<br><span style="color:#ffb14a">Click <b>Save Configuration</b> to apply.</span>';
+      return;
+    }
+
+    // Generic skill config — apply settings to form fields
+    let applied = 0;
+    if (config.settings) {
+      for (const [key, value] of Object.entries(config.settings)) {
+        for (const [fieldId, fieldCfg] of Object.entries(FIELDS)) {
+          if (fieldCfg.key === key) {
+            const el = document.getElementById(fieldId);
+            if (el) { el.value = value; applied++; }
+          }
+        }
+      }
+    }
+
+    result.innerHTML = '<span style="color:#00e676">&#10003; Skill configured:</span> <b>' + (config.name || 'Custom') + '</b>'
+      + '<br>Applied ' + applied + ' settings.'
+      + '<br><span style="color:#ffb14a">Click <b>Save Configuration</b> to apply.</span>';
+  } catch (e) {
+    result.innerHTML = '<span style="color:#f44336">&#9888; Failed to parse skill QR:</span> ' + e.message;
+  }
+}
+
 // Auto-load on page ready
-document.addEventListener('DOMContentLoaded', () => { loadAll(); checkOAuthStatus(); });
 </script>
 </body>
 </html>

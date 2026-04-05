@@ -1,14 +1,12 @@
 package com.rayneo.visionclaw.core.network
 
+import android.content.Context
 import android.util.Log
 import com.rayneo.visionclaw.core.storage.AppPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 
 /**
  * Manages the Google OAuth2 token lifecycle:
@@ -18,10 +16,7 @@ import java.util.concurrent.TimeUnit
  */
 class GoogleOAuthManager(
     private val prefs: AppPreferences,
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build()
+    private val context: Context? = null
 ) {
 
     companion object {
@@ -29,9 +24,17 @@ class GoogleOAuthManager(
         private const val TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
         /** Refresh 5 minutes before actual expiry to avoid race conditions. */
         private const val EXPIRY_BUFFER_MS = 5 * 60 * 1000L
+        private const val CONNECT_TIMEOUT_MS = 10_000
+        private const val READ_TIMEOUT_MS = 15_000
     }
 
     // ── Public API ───────────────────────────────────────────────────────
+
+    /**
+     * Result of a token exchange attempt.
+     * On failure, [errorDetail] contains the reason from Google (e.g. "redirect_uri_mismatch").
+     */
+    data class ExchangeResult(val success: Boolean, val errorDetail: String = "")
 
     /**
      * Exchange an authorization code for an access token + refresh token.
@@ -42,14 +45,20 @@ class GoogleOAuthManager(
      * @return true on success, false on failure.
      */
     suspend fun exchangeCodeForTokens(code: String, redirectUri: String): Boolean =
+        exchangeCodeForTokensDetailed(code, redirectUri).success
+
+    /** Detailed version that returns Google's error reason on failure. */
+    suspend fun exchangeCodeForTokensDetailed(code: String, redirectUri: String): ExchangeResult =
         withContext(Dispatchers.IO) {
             val clientId = prefs.googleOAuthClientId
             val clientSecret = prefs.googleOAuthClientSecret
 
             if (clientId.isBlank()) {
                 Log.e(TAG, "OAuth client ID is missing")
-                return@withContext false
+                return@withContext ExchangeResult(false, "OAuth client ID is missing in settings")
             }
+
+            Log.d(TAG, "Token exchange: clientId=${clientId.take(20)}…, redirect=$redirectUri, secretPresent=${clientSecret.isNotBlank()}")
 
             val formBody = FormBody.Builder()
                 .add("code", code)
@@ -62,19 +71,22 @@ class GoogleOAuthManager(
                 formBody.add("client_secret", clientSecret)
             }
 
-            val request = Request.Builder()
-                .url(TOKEN_ENDPOINT)
-                .post(formBody.build())
-                .build()
-
             try {
-                val response = client.newCall(request).execute()
-                val body = response.body?.string() ?: ""
-                Log.d(TAG, "Token exchange response: ${response.code}")
+                val (responseCode, body) = executeTokenRequest(formBody.build())
+                Log.d(TAG, "Token exchange response: $responseCode — $body")
 
-                if (!response.isSuccessful) {
-                    Log.e(TAG, "Token exchange failed (${response.code}): $body")
-                    return@withContext false
+                if (responseCode !in 200..299) {
+                    Log.e(TAG, "Token exchange failed ($responseCode): $body")
+                    // Extract Google's error reason
+                    val errorMsg = try {
+                        val errJson = JSONObject(body)
+                        val error = errJson.optString("error", "")
+                        val desc = errJson.optString("error_description", "")
+                        if (desc.isNotBlank()) "$error: $desc" else error.ifBlank { "HTTP $responseCode" }
+                    } catch (_: Exception) {
+                        "HTTP $responseCode"
+                    }
+                    return@withContext ExchangeResult(false, errorMsg)
                 }
 
                 val json = JSONObject(body)
@@ -84,7 +96,7 @@ class GoogleOAuthManager(
 
                 if (accessToken.isBlank()) {
                     Log.e(TAG, "No access_token in response")
-                    return@withContext false
+                    return@withContext ExchangeResult(false, "No access_token in Google response")
                 }
 
                 prefs.googleOAuthAccessToken = accessToken
@@ -95,10 +107,10 @@ class GoogleOAuthManager(
                     System.currentTimeMillis() + (expiresIn * 1000)
 
                 Log.i(TAG, "OAuth tokens stored (expires in ${expiresIn}s)")
-                true
+                ExchangeResult(true)
             } catch (e: Exception) {
                 Log.e(TAG, "Token exchange error", e)
-                false
+                ExchangeResult(false, "Network error: ${e.message}")
             }
         }
 
@@ -112,6 +124,7 @@ class GoogleOAuthManager(
 
         // Token still valid?
         if (System.currentTimeMillis() < prefs.googleOAuthTokenExpiryMs - EXPIRY_BUFFER_MS) {
+            Log.d(TAG, "Using cached access token")
             return@withContext accessToken
         }
 
@@ -147,19 +160,14 @@ class GoogleOAuthManager(
             formBody.add("client_secret", clientSecret)
         }
 
-        val request = Request.Builder()
-            .url(TOKEN_ENDPOINT)
-            .post(formBody.build())
-            .build()
-
         try {
-            val response = client.newCall(request).execute()
-            val body = response.body?.string() ?: ""
+            Log.d(TAG, "Refreshing Google OAuth access token")
+            val (responseCode, body) = executeTokenRequest(formBody.build())
 
-            if (!response.isSuccessful) {
-                Log.e(TAG, "Token refresh failed (${response.code}): $body")
+            if (responseCode !in 200..299) {
+                Log.e(TAG, "Token refresh failed ($responseCode): $body")
                 // If refresh token is invalid/revoked, clear everything
-                if (response.code == 400 || response.code == 401) {
+                if (responseCode == 400 || responseCode == 401) {
                     val lower = body.lowercase()
                     if (lower.contains("invalid_grant") || lower.contains("token has been revoked")) {
                         Log.w(TAG, "Refresh token revoked — clearing OAuth tokens")
@@ -194,5 +202,24 @@ class GoogleOAuthManager(
             Log.e(TAG, "Token refresh error", e)
             false
         }
+    }
+
+    private fun executeTokenRequest(formBody: FormBody): Pair<Int, String> {
+        val payload = buildString {
+            for (i in 0 until formBody.size) {
+                if (i > 0) append('&')
+                append(formBody.encodedName(i))
+                append('=')
+                append(formBody.encodedValue(i))
+            }
+        }
+        val response = ActiveNetworkHttp.postForm(
+            url = TOKEN_ENDPOINT,
+            encodedFormBody = payload,
+            headers = mapOf("Content-Type" to "application/x-www-form-urlencoded"),
+            connectTimeoutMs = CONNECT_TIMEOUT_MS,
+            readTimeoutMs = READ_TIMEOUT_MS
+        )
+        return response.code to response.body
     }
 }

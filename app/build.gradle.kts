@@ -13,8 +13,8 @@ android {
         applicationId = "com.rayneo.visionclaw"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 5
+        versionName = "1.1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -77,11 +77,14 @@ dependencies {
     implementation("androidx.camera:camera-core:1.4.1")
     implementation("androidx.camera:camera-camera2:1.4.1")
     implementation("androidx.camera:camera-lifecycle:1.4.1")
+    implementation("com.google.guava:guava:33.4.0-android")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.11.0")
+
+    implementation("org.bouncycastle:bcprov-jdk18on:1.80")
 
     // Lightweight embedded HTTP server for companion config page
     implementation("org.nanohttpd:nanohttpd:2.3.1")

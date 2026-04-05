@@ -11,6 +11,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.rayneo.visionclaw.R
@@ -132,6 +133,7 @@ class ChatAdapter(
         private val rowRoot: LinearLayout = itemView.findViewById(R.id.messageRow)
         private val bubble: LinearLayout = itemView.findViewById(R.id.messageBubble)
         private val messageText: TextView = itemView.findViewById(R.id.messageText)
+        private val messageScrollView: ScrollView = itemView.findViewById(R.id.messageScrollView)
         private val launchCard: LinearLayout = itemView.findViewById(R.id.launchCard)
         private val launchCardUrl: TextView = itemView.findViewById(R.id.launchCardUrl)
 

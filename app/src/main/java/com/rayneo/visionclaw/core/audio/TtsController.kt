@@ -40,8 +40,13 @@ class TtsController(
         initTts()
     }
 
-    fun speak(text: String) {
+    /**
+     * Speak text aloud. Set [force] to true for voice-session audio that should
+     * always play regardless of the auto-read preference.
+     */
+    fun speak(text: String, force: Boolean = false) {
         if (preferences.ttsMuted || text.isBlank()) return
+        if (!force && !preferences.ttsAutoRead) return
         if (!requestAudioFocus()) {
             Log.w(TAG, "Audio focus not granted for TTS")
             return
@@ -55,6 +60,10 @@ class TtsController(
     }
 
     private fun speakInternal(text: String) {
+        // Apply user-configured speech rate (0 or negative = default 1.0)
+        val rate = preferences.ttsSpeechRate
+        tts?.setSpeechRate(if (rate > 0f) rate else 1.0f)
+
         val params = Bundle().apply {
             putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, preferences.ttsVolume)
             putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)

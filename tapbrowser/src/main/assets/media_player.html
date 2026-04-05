@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>TapInsight Media Player</title>
+<style>
+/* ── Reset & Base ── */
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#0a0a0a;color:#e8e8e8;
+  font-family:'Segoe UI','Roboto','Helvetica Neue',Arial,sans-serif;
+  -webkit-tap-highlight-color:transparent;user-select:none}
+
+/* ── Text Reader Mode ── */
+#textReader{display:none;position:absolute;inset:0;background:#0d0d0d;flex-direction:column}
+#textReader.active{display:flex}
+
+#textHeader{flex-shrink:0;padding:12px 16px 8px;background:linear-gradient(180deg,#111 0%,#0d0d0d 100%);
+  border-bottom:1px solid #1a1a1a;display:flex;align-items:center;gap:12px;z-index:10}
+#textTitle{flex:1;font-size:15px;font-weight:600;color:#ccc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#textProgress{font-size:11px;color:#555;flex-shrink:0}
+
+#textBody{flex:1;overflow-y:auto;padding:20px 18px 80px;line-height:1.85;font-size:17px;
+  color:#d4d4d4;-webkit-overflow-scrolling:touch}
+#textBody.large-font{font-size:22px;line-height:2}
+#textBody .word{display:inline;cursor:default;border-radius:2px;transition:background .15s,color .15s}
+#textBody .word.spoken{background:#00e5ff22;color:#00e5ff}
+#textBody.underline-on .word.spoken{text-decoration:underline;
+  text-decoration-color:#00e5ff80;text-underline-offset:3px}
+#textBody .word.past{color:#888}
+#textBody .paragraph{margin-bottom:1.2em;display:block}
+
+/* Text Reader Controls */
+#textControls{position:fixed;bottom:0;left:0;right:0;background:linear-gradient(0deg,#111 0%,#11111100 100%);
+  padding:16px;display:flex;align-items:center;gap:10px;z-index:20}
+.ctrl-btn{width:44px;height:44px;border-radius:50%;border:none;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-size:18px;
+  background:#1a1a1a;color:#e0e0e0;transition:background .2s,transform .1s}
+.ctrl-btn:active{transform:scale(.9);background:#333}
+.ctrl-btn.playing{background:#00e5ff;color:#000}
+#ttsSpeed{flex-shrink:0;font-size:11px;color:#888;min-width:36px;text-align:center}
+#textSeekBar{flex:1;height:4px;-webkit-appearance:none;appearance:none;background:#333;
+  border-radius:2px;outline:none;cursor:pointer}
+#textSeekBar::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;
+  border-radius:50%;background:#00e5ff;cursor:pointer}
+
+/* ── Audio Player Mode ── */
+#audioPlayer{display:none;position:absolute;inset:0;background:radial-gradient(ellipse at center,#141420 0%,#0a0a0a 70%);
+  flex-direction:column;align-items:center;justify-content:center;padding:24px}
+#audioPlayer.active{display:flex}
+
+#audioArt{width:200px;height:200px;border-radius:20px;background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460);
+  display:flex;align-items:center;justify-content:center;margin-bottom:24px;
+  box-shadow:0 8px 40px rgba(0,229,255,.12)}
+#audioArt .icon{font-size:72px;opacity:.6}
+#audioTitle{font-size:18px;font-weight:600;color:#e0e0e0;margin-bottom:6px;text-align:center;max-width:90%}
+#audioArtist{font-size:13px;color:#888;margin-bottom:24px;text-align:center}
+#audioSeekWrap{width:90%;max-width:400px;margin-bottom:8px}
+#audioSeek{width:100%;height:6px;-webkit-appearance:none;appearance:none;background:#222;
+  border-radius:3px;outline:none;cursor:pointer}
+#audioSeek::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;
+  border-radius:50%;background:#00e5ff;cursor:pointer;box-shadow:0 0 8px rgba(0,229,255,.4)}
+#audioTimeRow{display:flex;justify-content:space-between;width:90%;max-width:400px;
+  font-size:11px;color:#666;margin-bottom:20px}
+#audioControls{display:flex;align-items:center;gap:20px}
+.audio-btn{width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;
+  background:#1a1a1a;color:#e0e0e0;font-size:22px;display:flex;align-items:center;
+  justify-content:center;transition:background .2s,transform .15s}
+.audio-btn:active{transform:scale(.9)}
+.audio-btn.play{width:64px;height:64px;background:#00e5ff;color:#000;font-size:26px}
+.audio-btn.play.playing{background:#ff5252}
+
+/* ── Video Player Mode ── */
+#videoPlayer{display:none;position:absolute;inset:0;background:#000;z-index:50}
+#videoPlayer.active{display:block}
+#videoEl{width:100%;height:100%;object-fit:contain;background:#000}
+
+/* Video Overlay Controls */
+#videoOverlay{position:absolute;inset:0;display:flex;flex-direction:column;
+  justify-content:flex-end;opacity:0;transition:opacity .3s;z-index:60;pointer-events:none}
+#videoOverlay.visible{opacity:1;pointer-events:auto}
+#videoOverlay.always{opacity:1;pointer-events:auto}
+
+#videoTopBar{position:absolute;top:0;left:0;right:0;padding:12px 16px;
+  background:linear-gradient(180deg,rgba(0,0,0,.7) 0%,transparent 100%);
+  display:flex;align-items:center;gap:12px}
+#videoTitle{flex:1;font-size:14px;font-weight:600;color:#fff;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+
+#videoBottomBar{padding:10px 16px 18px;
+  background:linear-gradient(0deg,rgba(0,0,0,.8) 0%,transparent 100%)}
+#videoSeek{width:100%;height:8px;-webkit-appearance:none;appearance:none;
+  background:rgba(255,255,255,.15);border-radius:4px;outline:none;cursor:pointer;margin-bottom:8px}
+#videoSeek::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;
+  border-radius:50%;background:#00e5ff;cursor:pointer;box-shadow:0 0 10px rgba(0,229,255,.5)}
+#videoSeek::-webkit-slider-runnable-track{border-radius:4px}
+#videoTimeRow{display:flex;justify-content:space-between;font-size:12px;color:#aaa;margin-bottom:10px}
+#videoControlRow{display:flex;align-items:center;justify-content:center;gap:24px}
+.vid-btn{width:44px;height:44px;border-radius:50%;border:none;cursor:pointer;
+  background:rgba(255,255,255,.1);color:#fff;font-size:20px;
+  display:flex;align-items:center;justify-content:center;transition:background .2s}
+.vid-btn:active{background:rgba(255,255,255,.25)}
+.vid-btn.play{width:56px;height:56px;background:#00e5ff;color:#000;font-size:24px}
+
+/* Captions */
+#captionOverlay{position:absolute;bottom:90px;left:5%;right:5%;text-align:center;
+  z-index:65;pointer-events:none}
+#captionText{display:inline-block;padding:6px 14px;border-radius:6px;
+  background:rgba(0,0,0,.75);color:#fff;font-size:16px;line-height:1.5;
+  max-width:90%;text-shadow:0 1px 3px rgba(0,0,0,.8)}
+
+/* ── Loading / Error ── */
+#loadingOverlay{position:fixed;inset:0;background:#0a0a0a;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;z-index:100;transition:opacity .4s}
+#loadingOverlay.hidden{opacity:0;pointer-events:none}
+.spinner{width:40px;height:40px;border:3px solid #222;border-top-color:#00e5ff;
+  border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#loadingText{margin-top:14px;font-size:13px;color:#888}
+#errorMsg{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  background:#1a0000;border:1px solid #f44336;border-radius:10px;padding:20px;
+  text-align:center;color:#ef9a9a;font-size:14px;z-index:200;max-width:80%}
+
+/* ── Gesture Hint ── */
+#gestureHint{position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+  background:rgba(0,0,0,.8);color:#aaa;padding:8px 16px;border-radius:20px;
+  font-size:11px;white-space:nowrap;z-index:80;opacity:0;transition:opacity .5s;pointer-events:none}
+#gestureHint.show{opacity:1}
+</style>
+</head>
+<body>
+
+<!-- Loading Screen -->
+<div id="loadingOverlay">
+  <div class="spinner"></div>
+  <div id="loadingText">Loading media...</div>
+</div>
+
+<!-- Error Display -->
+<div id="errorMsg"></div>
+
+<!-- ═══ TEXT READER ═══ -->
+<div id="textReader">
+  <div id="textHeader">
+    <div id="textTitle">Document</div>
+    <div id="textProgress"></div>
+  </div>
+  <div id="textBody"></div>
+  <div id="textControls">
+    <button class="ctrl-btn" id="ttsPlayBtn" title="Read aloud">🔊</button>
+    <input type="range" id="textSeekBar" min="0" max="100" value="0">
+    <div id="ttsSpeed">1.0×</div>
+    <button class="ctrl-btn" id="ttsFasterBtn" title="Speed up">⏩</button>
+    <button class="ctrl-btn" id="ttsUnderlineBtn" title="Toggle word underline">U̲</button>
+    <button class="ctrl-btn" id="ttsFontBtn" title="Font size">Aa</button>
+  </div>
+</div>
+
+<!-- ═══ AUDIO PLAYER ═══ -->
+<div id="audioPlayer">
+  <div id="audioArt"><div class="icon">🎵</div></div>
+  <div id="audioTitle">Audio</div>
+  <div id="audioArtist">Unknown</div>
+  <div id="audioSeekWrap"><input type="range" id="audioSeek" min="0" max="100" value="0" step="0.1"></div>
+  <div id="audioTimeRow"><span id="audioTimeCur">0:00</span><span id="audioTimeDur">0:00</span></div>
+  <div id="audioControls">
+    <button class="audio-btn" id="audioRew" title="Rewind 15s">⏪</button>
+    <button class="audio-btn play" id="audioPlayBtn">▶</button>
+    <button class="audio-btn" id="audioFwd" title="Forward 15s">⏩</button>
+  </div>
+</div>
+
+<!-- ═══ VIDEO PLAYER ═══ -->
+<div id="videoPlayer">
+  <video id="videoEl" playsinline></video>
+  <div id="captionOverlay"><span id="captionText"></span></div>
+  <div id="videoOverlay" class="always">
+    <div id="videoTopBar">
+      <div id="videoTitle">Video</div>
+    </div>
+    <div id="videoBottomBar">
+      <input type="range" id="videoSeek" min="0" max="100" value="0" step="0.01">
+      <div id="videoTimeRow"><span id="videoTimeCur">0:00</span><span id="videoTimeDur">0:00</span></div>
+      <div id="videoControlRow">
+        <button class="vid-btn" id="videoRew">⏪</button>
+        <button class="vid-btn play" id="videoPlayBtn">▶</button>
+        <button class="vid-btn" id="videoFwd">⏩</button>
+        <button class="vid-btn" id="videoCCBtn" title="Captions">CC</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Gesture Hint -->
+<div id="gestureHint">Tap to pause · Double-tap to exit</div>
+
+<audio id="audioEl" preload="auto"></audio>
+
+<script>
+// ── URL Params ──
+var params = new URLSearchParams(window.location.search);
+var mediaUrl = params.get('url') || '';
+var mediaType = (params.get('type') || '').toLowerCase();  // text, audio, video
+var mediaTitle = params.get('title') || '';
+var captionUrl = params.get('srt') || params.get('captions') || '';
+
+// ── Detect media type from URL if not explicit ──
+if (!mediaType && mediaUrl) {
+  var ext = mediaUrl.split('?')[0].split('#')[0].split('.').pop().toLowerCase();
+  var textExts = ['txt','md','log','csv','json','xml','html','htm','rtf','ini','cfg','conf','yaml','yml','toml'];
+  var audioExts = ['mp3','wav','ogg','m4a','aac','flac','wma','opus','webm'];
+  var videoExts = ['mp4','webm','mkv','avi','mov','m4v','ogv','3gp'];
+  if (textExts.indexOf(ext) !== -1) mediaType = 'text';
+  else if (audioExts.indexOf(ext) !== -1) mediaType = 'audio';
+  else if (videoExts.indexOf(ext) !== -1) mediaType = 'video';
+  else mediaType = 'text'; // Default fallback
+}
+
+if (!mediaTitle) {
+  try { mediaTitle = decodeURIComponent(mediaUrl.split('/').pop().split('?')[0]); } catch(e) { mediaTitle = 'Media'; }
+}
+
+// ── Utility ──
+function fmt(s) {
+  if (!s || !isFinite(s)) return '0:00';
+  var h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = Math.floor(s%60);
+  return h > 0 ? h+':'+String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0')
+               : m+':'+String(sec).padStart(2,'0');
+}
+function showError(msg) {
+  document.getElementById('loadingOverlay').classList.add('hidden');
+  var el = document.getElementById('errorMsg');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+function hideLoading() {
+  document.getElementById('loadingOverlay').classList.add('hidden');
+}
+function showGestureHint() {
+  var h = document.getElementById('gestureHint');
+  h.classList.add('show');
+  setTimeout(function(){ h.classList.remove('show'); }, 3000);
+}
+
+// ══════════════════════════════════════════════
+// ══════ TEXT READER ══════════════════════════
+// ══════════════════════════════════════════════
+var ttsWords = [];
+var ttsIndex = 0;
+var ttsPlaying = false;
+var ttsRate = 1.0;
+var ttsUtterance = null;
+var ttsPaused = false;
+var largeFontOn = false;
+// Configurable via URL params from companion app preferences
+var preferredVoiceName = params.get('voice') || '';
+var underlineOn = params.get('underline') !== 'false'; // default on
+
+function initTextReader(text) {
+  document.getElementById('textReader').classList.add('active');
+  document.getElementById('textTitle').textContent = mediaTitle;
+  var body = document.getElementById('textBody');
+  body.innerHTML = '';
+  ttsWords = [];
+  // Split into paragraphs, then words
+  var paragraphs = text.split(/\n\s*\n|\r\n\s*\r\n/);
+  if (paragraphs.length <= 1) paragraphs = text.split(/\n|\r\n/);
+  var globalIdx = 0;
+  paragraphs.forEach(function(para) {
+    if (!para.trim()) return;
+    var pEl = document.createElement('span');
+    pEl.className = 'paragraph';
+    var words = para.trim().split(/(\s+)/);
+    words.forEach(function(w) {
+      if (!w.trim()) {
+        pEl.appendChild(document.createTextNode(w));
+        return;
+      }
+      var span = document.createElement('span');
+      span.className = 'word';
+      span.dataset.idx = globalIdx;
+      span.textContent = w;
+      pEl.appendChild(span);
+      ttsWords.push({ el: span, text: w, idx: globalIdx });
+      globalIdx++;
+      pEl.appendChild(document.createTextNode(' '));
+    });
+    body.appendChild(pEl);
+  });
+  updateTextProgress();
+  var seekBar = document.getElementById('textSeekBar');
+  seekBar.max = Math.max(ttsWords.length - 1, 1);
+  seekBar.value = 0;
+  seekBar.addEventListener('input', function() {
+    ttsIndex = parseInt(this.value);
+    highlightWord(ttsIndex);
+    if (ttsPlaying) { stopTts(); startTtsFrom(ttsIndex); }
+  });
+  // Apply underline preference
+  body.classList.toggle('underline-on', underlineOn);
+  var ulBtn = document.getElementById('ttsUnderlineBtn');
+  ulBtn.style.opacity = underlineOn ? 1 : 0.4;
+  ulBtn.addEventListener('click', toggleUnderline);
+  document.getElementById('ttsPlayBtn').addEventListener('click', toggleTts);
+  document.getElementById('ttsFasterBtn').addEventListener('click', cycleTtsSpeed);
+  document.getElementById('ttsFontBtn').addEventListener('click', toggleFontSize);
+  hideLoading();
+  showGestureHint();
+}
+
+function updateTextProgress() {
+  var pct = ttsWords.length > 0 ? Math.round((ttsIndex / ttsWords.length) * 100) : 0;
+  document.getElementById('textProgress').textContent = pct + '% · ' + ttsWords.length + ' words';
+}
+
+function highlightWord(idx) {
+  ttsWords.forEach(function(w, i) {
+    w.el.classList.remove('spoken');
+    if (i < idx) w.el.classList.add('past');
+    else w.el.classList.remove('past');
+  });
+  if (idx < ttsWords.length) {
+    ttsWords[idx].el.classList.add('spoken');
+    // Auto-scroll: only scroll when the spoken word nears the bottom of the
+    // visible viewport.  This avoids constant jittery scrolling on every word
+    // and instead pages smoothly when the reader moves past the visible area.
+    autoScrollToWord(ttsWords[idx].el);
+  }
+  document.getElementById('textSeekBar').value = idx;
+  updateTextProgress();
+}
+
+// Efficient page-style auto-scroll: scroll only when the current word is in the
+// bottom 20% of the container (or above the top, e.g. after a seek).  When
+// triggered, positions the word at ~25% from the top so the reader has context
+// of what was just read while seeing plenty of upcoming text.
+function autoScrollToWord(el) {
+  var container = document.getElementById('textBody');
+  if (!container) return;
+  var cRect = container.getBoundingClientRect();
+  var wRect = el.getBoundingClientRect();
+  // Position of word relative to the container viewport
+  var relTop = wRect.top - cRect.top;
+  var relBot = wRect.bottom - cRect.top;
+  var threshold = cRect.height * 0.80; // bottom 20% triggers scroll
+  var aboveView = relBot < 0;          // word scrolled above viewport (seek)
+  if (relTop > threshold || aboveView) {
+    // Target: place word at 25% from the top of the container
+    var targetOffset = cRect.height * 0.25;
+    var scrollTo = container.scrollTop + (relTop - targetOffset);
+    container.scrollTo({ top: scrollTo, behavior: 'smooth' });
+  }
+}
+
+function toggleTts() {
+  if (ttsPlaying) { stopTts(); }
+  else { startTtsFrom(ttsIndex); }
+}
+
+function startTtsFrom(startIdx) {
+  if (startIdx >= ttsWords.length) { startIdx = 0; ttsIndex = 0; }
+  ttsPlaying = true;
+  document.getElementById('ttsPlayBtn').textContent = '🔇';
+  document.getElementById('ttsPlayBtn').classList.add('playing');
+  speakNextChunk(startIdx);
+}
+
+function speakNextChunk(fromIdx) {
+  if (!ttsPlaying || fromIdx >= ttsWords.length) {
+    if (fromIdx >= ttsWords.length) stopTts();
+    return;
+  }
+  // Build chunks of ~20 words for natural speech pacing
+  var chunkSize = 20;
+  var endIdx = Math.min(fromIdx + chunkSize, ttsWords.length);
+  var chunkText = ttsWords.slice(fromIdx, endIdx).map(function(w){ return w.text; }).join(' ');
+
+  var utter = new SpeechSynthesisUtterance(chunkText);
+  utter.rate = ttsRate;
+  utter.pitch = 1.0;
+  // Pick voice: user preference from companion app, or soothing fallback
+  var voices = speechSynthesis.getVoices();
+  var preferred = null;
+  if (preferredVoiceName) {
+    var pref = preferredVoiceName.toLowerCase();
+    preferred = voices.find(function(v){ return v.name.toLowerCase() === pref; })
+      || voices.find(function(v){ return v.name.toLowerCase().indexOf(pref) !== -1; });
+  }
+  if (!preferred) {
+    preferred = voices.find(function(v){
+      return v.name.indexOf('Samantha') !== -1 || v.name.indexOf('Google UK English Female') !== -1
+        || v.name.indexOf('Karen') !== -1 || v.name.indexOf('Moira') !== -1;
+    }) || voices.find(function(v){ return v.lang.startsWith('en') && v.name.indexOf('Female') !== -1; })
+       || voices.find(function(v){ return v.lang.startsWith('en'); });
+  }
+  if (preferred) utter.voice = preferred;
+
+  // Word boundary events for highlighting
+  var wordOffset = fromIdx;
+  utter.addEventListener('boundary', function(e) {
+    if (e.name === 'word') {
+      // Map character offset to word index within chunk
+      var spoken = chunkText.substring(0, e.charIndex);
+      var wordsSpoken = spoken.split(/\s+/).filter(function(w){ return w.length > 0; }).length;
+      var currentIdx = fromIdx + wordsSpoken;
+      if (currentIdx < ttsWords.length) {
+        ttsIndex = currentIdx;
+        highlightWord(currentIdx);
+      }
+    }
+  });
+
+  utter.addEventListener('end', function() {
+    ttsIndex = endIdx;
+    highlightWord(endIdx);
+    if (ttsPlaying) speakNextChunk(endIdx);
+  });
+
+  utter.addEventListener('error', function(e) {
+    if (e.error !== 'canceled') console.error('TTS error:', e.error);
+  });
+
+  ttsUtterance = utter;
+  speechSynthesis.speak(utter);
+}
+
+function stopTts() {
+  ttsPlaying = false;
+  speechSynthesis.cancel();
+  document.getElementById('ttsPlayBtn').textContent = '🔊';
+  document.getElementById('ttsPlayBtn').classList.remove('playing');
+}
+
+function toggleUnderline() {
+  underlineOn = !underlineOn;
+  document.getElementById('textBody').classList.toggle('underline-on', underlineOn);
+  document.getElementById('ttsUnderlineBtn').style.opacity = underlineOn ? 1 : 0.4;
+}
+
+function cycleTtsSpeed() {
+  var speeds = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+  var cur = speeds.indexOf(ttsRate);
+  ttsRate = speeds[(cur + 1) % speeds.length];
+  document.getElementById('ttsSpeed').textContent = ttsRate + '×';
+  if (ttsPlaying) { stopTts(); startTtsFrom(ttsIndex); }
+}
+
+function toggleFontSize() {
+  largeFontOn = !largeFontOn;
+  document.getElementById('textBody').classList.toggle('large-font', largeFontOn);
+}
+
+// ══════════════════════════════════════════════
+// ══════ AUDIO PLAYER ════════════════════════
+// ══════════════════════════════════════════════
+var audioEl = document.getElementById('audioEl');
+
+function initAudioPlayer(url) {
+  document.getElementById('audioPlayer').classList.add('active');
+  document.getElementById('audioTitle').textContent = mediaTitle;
+  audioEl.src = url;
+  audioEl.load();
+
+  var seek = document.getElementById('audioSeek');
+  var playBtn = document.getElementById('audioPlayBtn');
+
+  audioEl.addEventListener('loadedmetadata', function() {
+    document.getElementById('audioTimeDur').textContent = fmt(audioEl.duration);
+    seek.max = audioEl.duration || 100;
+    hideLoading();
+    showGestureHint();
+  });
+  audioEl.addEventListener('timeupdate', function() {
+    if (!seek._dragging) {
+      seek.value = audioEl.currentTime;
+      document.getElementById('audioTimeCur').textContent = fmt(audioEl.currentTime);
+    }
+  });
+  audioEl.addEventListener('ended', function() {
+    playBtn.textContent = '▶';
+    playBtn.classList.remove('playing');
+  });
+  audioEl.addEventListener('error', function() { showError('Could not load audio file.'); });
+
+  seek.addEventListener('mousedown', function(){ seek._dragging = true; });
+  seek.addEventListener('touchstart', function(){ seek._dragging = true; });
+  seek.addEventListener('input', function() {
+    document.getElementById('audioTimeCur').textContent = fmt(parseFloat(this.value));
+  });
+  seek.addEventListener('change', function() {
+    audioEl.currentTime = parseFloat(this.value);
+    seek._dragging = false;
+  });
+
+  playBtn.addEventListener('click', function() { toggleAudio(); });
+  document.getElementById('audioRew').addEventListener('click', function() {
+    audioEl.currentTime = Math.max(0, audioEl.currentTime - 15);
+  });
+  document.getElementById('audioFwd').addEventListener('click', function() {
+    audioEl.currentTime = Math.min(audioEl.duration, audioEl.currentTime + 15);
+  });
+
+  // Auto-play
+  audioEl.play().catch(function(){});
+  playBtn.textContent = '⏸';
+  playBtn.classList.add('playing');
+}
+
+function toggleAudio() {
+  var btn = document.getElementById('audioPlayBtn');
+  if (audioEl.paused) {
+    audioEl.play(); btn.textContent = '⏸'; btn.classList.add('playing');
+  } else {
+    audioEl.pause(); btn.textContent = '▶'; btn.classList.remove('playing');
+  }
+}
+
+// ══════════════════════════════════════════════
+// ══════ VIDEO PLAYER ════════════════════════
+// ══════════════════════════════════════════════
+var videoEl = document.getElementById('videoEl');
+var videoOverlay = document.getElementById('videoOverlay');
+var overlayTimer = null;
+var captions = [];
+var captionsEnabled = true;
+
+function initVideoPlayer(url) {
+  document.getElementById('videoPlayer').classList.add('active');
+  document.getElementById('videoTitle').textContent = mediaTitle;
+  videoEl.src = url;
+  videoEl.load();
+
+  var seek = document.getElementById('videoSeek');
+  var playBtn = document.getElementById('videoPlayBtn');
+
+  videoEl.addEventListener('loadedmetadata', function() {
+    document.getElementById('videoTimeDur').textContent = fmt(videoEl.duration);
+    seek.max = videoEl.duration || 100;
+    hideLoading();
+    showGestureHint();
+    // Try to load track element captions
+    if (videoEl.textTracks && videoEl.textTracks.length > 0) {
+      videoEl.textTracks[0].mode = 'showing';
+    }
+  });
+  videoEl.addEventListener('timeupdate', function() {
+    if (!seek._dragging) {
+      seek.value = videoEl.currentTime;
+      document.getElementById('videoTimeCur').textContent = fmt(videoEl.currentTime);
+    }
+    updateCaptions(videoEl.currentTime);
+  });
+  videoEl.addEventListener('ended', function() {
+    playBtn.textContent = '▶';
+    playBtn.classList.remove('playing');
+    showVideoOverlay();
+  });
+  videoEl.addEventListener('error', function() { showError('Could not load video file.'); });
+
+  // Seek bar
+  seek.addEventListener('mousedown', function(){ seek._dragging = true; });
+  seek.addEventListener('touchstart', function(){ seek._dragging = true; });
+  seek.addEventListener('input', function() {
+    document.getElementById('videoTimeCur').textContent = fmt(parseFloat(this.value));
+  });
+  seek.addEventListener('change', function() {
+    videoEl.currentTime = parseFloat(this.value);
+    seek._dragging = false;
+  });
+
+  // Mouse move to show scrub bar
+  document.getElementById('videoPlayer').addEventListener('mousemove', function() {
+    showVideoOverlay();
+  });
+
+  playBtn.addEventListener('click', function(e) { e.stopPropagation(); toggleVideo(); });
+  document.getElementById('videoRew').addEventListener('click', function(e) {
+    e.stopPropagation();
+    videoEl.currentTime = Math.max(0, videoEl.currentTime - 10);
+  });
+  document.getElementById('videoFwd').addEventListener('click', function(e) {
+    e.stopPropagation();
+    videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + 10);
+  });
+  document.getElementById('videoCCBtn').addEventListener('click', function(e) {
+    e.stopPropagation();
+    captionsEnabled = !captionsEnabled;
+    this.style.opacity = captionsEnabled ? 1 : 0.4;
+    if (!captionsEnabled) document.getElementById('captionText').textContent = '';
+  });
+
+  // Load captions if URL provided
+  if (captionUrl) loadSrtCaptions(captionUrl);
+
+  // Auto-play fullscreen
+  videoEl.play().then(function() {
+    playBtn.textContent = '⏸'; playBtn.classList.add('playing');
+    hideVideoOverlayDelayed();
+  }).catch(function(){});
+}
+
+function toggleVideo() {
+  var btn = document.getElementById('videoPlayBtn');
+  if (videoEl.paused) {
+    videoEl.play(); btn.textContent = '⏸'; btn.classList.add('playing');
+    hideVideoOverlayDelayed();
+  } else {
+    videoEl.pause(); btn.textContent = '▶'; btn.classList.remove('playing');
+    showVideoOverlay();
+  }
+}
+
+function showVideoOverlay() {
+  videoOverlay.classList.add('visible');
+  clearTimeout(overlayTimer);
+  if (!videoEl.paused) hideVideoOverlayDelayed();
+}
+function hideVideoOverlayDelayed() {
+  clearTimeout(overlayTimer);
+  overlayTimer = setTimeout(function() {
+    if (!videoEl.paused) videoOverlay.classList.remove('visible');
+  }, 3500);
+}
+
+// ── SRT Caption Parser ──
+function loadSrtCaptions(url) {
+  fetch(url).then(function(r){ return r.text(); }).then(function(text) {
+    captions = parseSrt(text);
+  }).catch(function(e){ console.warn('Could not load captions:', e); });
+}
+
+function parseSrt(text) {
+  var result = [];
+  var blocks = text.replace(/\r\n/g, '\n').split('\n\n');
+  blocks.forEach(function(block) {
+    var lines = block.trim().split('\n');
+    if (lines.length < 3) return;
+    var timeLine = lines[1];
+    var match = timeLine.match(/(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/);
+    if (!match) return;
+    var start = parseInt(match[1])*3600 + parseInt(match[2])*60 + parseInt(match[3]) + parseInt(match[4])/1000;
+    var end = parseInt(match[5])*3600 + parseInt(match[6])*60 + parseInt(match[7]) + parseInt(match[8])/1000;
+    var content = lines.slice(2).join('\n').replace(/<[^>]+>/g, '');
+    result.push({ start: start, end: end, text: content });
+  });
+  return result;
+}
+
+function updateCaptions(time) {
+  if (!captionsEnabled || captions.length === 0) return;
+  var el = document.getElementById('captionText');
+  var active = captions.find(function(c){ return time >= c.start && time <= c.end; });
+  el.textContent = active ? active.text : '';
+}
+
+// ══════════════════════════════════════════════
+// ══════ GESTURE CONTROLS ════════════════════
+// ══════════════════════════════════════════════
+var lastTapTime = 0;
+var tapTimeout = null;
+
+document.addEventListener('click', function(e) {
+  // Don't intercept control button clicks
+  if (e.target.closest('.ctrl-btn,.audio-btn,.vid-btn,input[type="range"],button,a,select')) return;
+
+  var now = Date.now();
+  if (now - lastTapTime < 350) {
+    // Double tap → exit
+    clearTimeout(tapTimeout);
+    lastTapTime = 0;
+    exitPlayer();
+    return;
+  }
+  lastTapTime = now;
+  tapTimeout = setTimeout(function() {
+    // Single tap → pause/play
+    singleTapAction();
+  }, 350);
+});
+
+function singleTapAction() {
+  if (mediaType === 'text') { toggleTts(); }
+  else if (mediaType === 'audio') { toggleAudio(); }
+  else if (mediaType === 'video') {
+    if (videoOverlay.classList.contains('visible') || videoEl.paused) {
+      toggleVideo();
+    } else {
+      showVideoOverlay();
+    }
+  }
+}
+
+function exitPlayer() {
+  // Stop all media
+  stopTts();
+  audioEl.pause();
+  videoEl.pause();
+  // Notify Android if interface exists
+  if (window.AndroidInterface && typeof AndroidInterface.exitMediaPlayer === 'function') {
+    AndroidInterface.exitMediaPlayer();
+  } else if (window.history.length > 1) {
+    window.history.back();
+  } else {
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#888;font-size:16px">Double-tapped to exit. Close this tab.</div>';
+  }
+}
+
+// ══════════════════════════════════════════════
+// ══════ KEYBOARD SHORTCUTS ══════════════════
+// ══════════════════════════════════════════════
+document.addEventListener('keydown', function(e) {
+  var key = e.key;
+  if (key === ' ' || key === 'k') { e.preventDefault(); singleTapAction(); }
+  else if (key === 'Escape') { exitPlayer(); }
+  else if (key === 'ArrowLeft') {
+    if (mediaType === 'audio') audioEl.currentTime = Math.max(0, audioEl.currentTime - 15);
+    else if (mediaType === 'video') videoEl.currentTime = Math.max(0, videoEl.currentTime - 10);
+  }
+  else if (key === 'ArrowRight') {
+    if (mediaType === 'audio') audioEl.currentTime = Math.min(audioEl.duration, audioEl.currentTime + 15);
+    else if (mediaType === 'video') videoEl.currentTime = Math.min(videoEl.duration, videoEl.currentTime + 10);
+  }
+  else if (key === 'f' && mediaType === 'video') {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else videoEl.requestFullscreen().catch(function(){});
+  }
+  else if (key === 'c' && mediaType === 'video') {
+    captionsEnabled = !captionsEnabled;
+    document.getElementById('videoCCBtn').style.opacity = captionsEnabled ? 1 : 0.4;
+    if (!captionsEnabled) document.getElementById('captionText').textContent = '';
+  }
+});
+
+// ══════════════════════════════════════════════
+// ══════ INIT ════════════════════════════════
+// ══════════════════════════════════════════════
+// Load TTS voices (must wait for voiceschanged event in some browsers)
+if (speechSynthesis.getVoices().length === 0) {
+  speechSynthesis.addEventListener('voiceschanged', function(){}, { once: true });
+}
+
+function initFromTextContent() {
+  // Check the window variable (legacy injection path)
+  if (window._textContent && typeof window._textContent === 'string') {
+    if (!window._textContent.trim()) { showError('File is empty.'); return true; }
+    initTextReader(window._textContent);
+    return true;
+  }
+  return false;
+}
+
+function tryPullFromBridge() {
+  // Pull text from Android bridge (preferred — no race conditions).
+  // The bridge stores text before loading this page, so it's always ready.
+  var bridge = window.AndroidInterface || window.MediaInterface;
+  if (bridge && typeof bridge.getPendingText === 'function') {
+    try {
+      var text = bridge.getPendingText();
+      if (text && text.trim().length > 0) {
+        initTextReader(text);
+        return true;
+      }
+    } catch(e) { console.warn('Bridge getPendingText failed:', e); }
+  }
+  return false;
+}
+
+window.addEventListener('DOMContentLoaded', function() {
+  document.getElementById('loadingText').textContent = 'Loading ' + mediaType + '...';
+
+  if (mediaType === 'text') {
+    // 1. Try pulling text from Android bridge (best — always ready)
+    if (tryPullFromBridge()) return;
+    // 2. Check if text was already injected into window._textContent
+    if (initFromTextContent()) return;
+    // 3. Poll for either bridge or injected text (up to 3 seconds)
+    var waitCount = 0;
+    var waitTimer = setInterval(function() {
+      if (tryPullFromBridge()) { clearInterval(waitTimer); return; }
+      if (initFromTextContent()) { clearInterval(waitTimer); return; }
+      waitCount++;
+      if (waitCount > 30) {
+        clearInterval(waitTimer);
+        // 4. Fallback: try fetch (works when loaded from same origin)
+        if (mediaUrl) {
+          fetch(mediaUrl).then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.text();
+          }).then(function(text) {
+            if (!text.trim()) { showError('File is empty.'); return; }
+            initTextReader(text);
+          }).catch(function(e) { showError('Could not load file: ' + e.message); });
+        } else {
+          showError('No text content available.');
+        }
+      }
+    }, 100);
+    return;
+
+  } else if (!mediaUrl) {
+    showError('No media URL provided.');
+    return;
+
+  } else if (mediaType === 'audio') {
+    initAudioPlayer(mediaUrl);
+
+  } else if (mediaType === 'video') {
+    initVideoPlayer(mediaUrl);
+
+  } else {
+    showError('Unknown media type: ' + mediaType);
+  }
+});
+</script>
+</body>
+</html>

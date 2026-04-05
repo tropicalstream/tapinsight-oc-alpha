@@ -39,25 +39,75 @@ h1{color:#00e5ff;font-size:24px;margin-bottom:4px}
 .footer{text-align:center;color:#444;font-size:11px;margin-top:24px;line-height:1.6}
 .footer a{color:#00e5ff;text-decoration:none}
 .footer a:hover{text-decoration:underline}
+.tab-row{display:flex;gap:0;margin-bottom:16px;border-radius:8px;overflow:hidden;border:1px solid #333}
+.tab{flex:1;padding:12px;background:#111;color:#888;border:none;font-size:14px;font-weight:600;cursor:pointer;transition:all .15s}
+.tab:hover{background:#1a1a1a;color:#ccc}
+.tab.active{background:#00e5ff;color:#000}
+.server-card{background:#111;border:1px solid #2d3d4a;border-radius:10px;padding:12px 14px;margin:0 0 16px 0;line-height:1.7}
+.server-card .title{font-size:12px;color:#8fdfff;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+.server-card .row{font-size:13px;color:#cfd8dc;margin-bottom:4px}
+.server-card code{background:#0a0f14;padding:2px 6px;border-radius:4px;color:#9ef3ff;font-size:12px;word-break:break-all}
 </style>
 </head>
 <body>
 
 <h1>TapInsight Companion</h1>
-<p class="sub">Connect to your RayNeo X3 Pro glasses over WiFi to configure the AI assistant, manage TapRadio stations, and more.</p>
+<p class="sub">Connect to your RayNeo X3 Pro glasses to configure the AI assistant, manage TapRadio stations, and more.</p>
 
-<div class="warn">
-  <b>Important:</b> Your phone/computer and the RayNeo X3 Pro glasses must be on the <b>same WiFi network</b>. The default IP below (192.168.1.217) is a common default — change it if your glasses have a different IP address. On the glasses, go to <b>Settings → WiFi → tap your connected network</b> to see the IP.
-  <br><br>
-  <b>Common LAN IP ranges:</b> 192.168.0.x, 192.168.1.x, 10.0.0.x, 172.16.x.x — update the IP below to match your network.
+<!-- Connection mode tabs -->
+<div class="tab-row">
+  <button class="tab active" id="tabUsb" onclick="switchTab('usb')">USB (Recommended)</button>
+  <button class="tab" id="tabWifi" onclick="switchTab('wifi')">WiFi</button>
 </div>
 
-<div class="card">
-  <h2>Step 1 — Connect to Glasses</h2>
+<div class="server-card" id="launcherServerInfoCard">
+  <div class="title">Connection Info</div>
+  <div class="row" id="launcherServerInfoStatus">Detecting companion connection info...</div>
+  <div class="row" id="launcherServerInfoCurrent"></div>
+  <div class="row" id="launcherServerInfoLan"></div>
+  <div class="row" id="launcherServerInfoPhone"></div>
+  <div class="row" id="launcherServerInfoUsb"></div>
+</div>
+
+<!-- USB Connection Panel -->
+<div class="card" id="panelUsb">
+  <h2>Connect via USB</h2>
+  <p>Fastest and most reliable. Requires the glasses connected via USB cable with ADB debugging enabled.</p>
+
+  <div id="usbStatusBar" class="status"></div>
+
+  <div class="step">
+    <div class="num">1</div>
+    <div class="text">Connect glasses via USB and run this once in your terminal:<br><code>adb forward tcp:19110 tcp:19110</code><br>
+    <span style="color:#666;font-size:11px">Or run the helper: <code>./setup_usb.sh --watch</code> for auto-reconnect</span></div>
+  </div>
+
+  <div class="step">
+    <div class="num">2</div>
+    <div class="text">Click the button below. If the forwarding is active, it connects instantly.</div>
+  </div>
+
+  <button class="btn primary" onclick="connectUsb()">Connect via localhost:19110</button>
+  <button class="btn secondary" onclick="testUsb()">Test USB Connection</button>
+
+  <div class="usb-hint" style="margin-top:12px;padding:10px;background:#111;border-radius:6px;font-size:11px;color:#888;line-height:1.5">
+    <b style="color:#aaa">Forwarding keeps dropping?</b> Run <code>./setup_usb.sh --watch</code> from the project folder. It automatically re-establishes the port forward whenever the glasses reconnect.
+  </div>
+</div>
+
+<!-- WiFi Connection Panel -->
+<div class="card" id="panelWifi" style="display:none">
+  <h2>Connect via WiFi</h2>
+
+  <div class="warn" style="margin-bottom:14px">
+    <b>Requirement:</b> Your computer and glasses must be on the <b>same WiFi network</b>. On the glasses, go to <b>Settings → WiFi → tap your connected network</b> to see the IP.
+    <br><br>
+    <b>Common LAN IP ranges:</b> 192.168.0.x, 192.168.1.x, 10.0.0.x, 172.16.x.x
+  </div>
 
   <div class="field">
     <label>Glasses IP Address</label>
-    <input type="text" id="glassesIp" class="ip" value="192.168.1.217" placeholder="192.168.1.217">
+    <input type="text" id="glassesIp" class="ip" value="" placeholder="192.168.1.45">
     <div class="hint">Find this in your glasses' WiFi settings. The companion server runs on port 19110.</div>
   </div>
 
@@ -119,7 +169,8 @@ h1{color:#00e5ff;font-size:24px;margin-bottom:4px}
 
 <div class="card">
   <h2>Troubleshooting</h2>
-  <p><b>Can't connect?</b> Make sure TapInsight is running on the glasses and both devices are on the same WiFi. Try pinging the glasses IP from your terminal: <code>ping 192.168.1.217</code></p>
+  <p><b>USB: localhost not working?</b> The ADB port forward resets when the glasses disconnect or reboot. Re-run <code>adb forward tcp:19110 tcp:19110</code>, or use <code>./setup_usb.sh --watch</code> for automatic reconnection.</p>
+  <p><b>WiFi: Can't connect?</b> Make sure TapInsight is running on the glasses and both devices are on the same WiFi. Try <code>ping <glasses-ip></code> from your terminal.</p>
   <p><b>Wrong IP?</b> Your router may assign a different IP. Check your glasses' WiFi settings or your router's connected devices list.</p>
   <p><b>Firewall?</b> Ensure port 19110 isn't blocked by your network firewall.</p>
 </div>
@@ -130,6 +181,85 @@ h1{color:#00e5ff;font-size:24px;margin-bottom:4px}
 </div>
 
 <script>
+const USB_URL = 'http://localhost:19110';
+
+async function loadServerInfoCard() {
+  const statusEl = document.getElementById('launcherServerInfoStatus');
+  const currentEl = document.getElementById('launcherServerInfoCurrent');
+  const lanEl = document.getElementById('launcherServerInfoLan');
+  const phoneEl = document.getElementById('launcherServerInfoPhone');
+  const usbEl = document.getElementById('launcherServerInfoUsb');
+  if (!statusEl) return;
+  statusEl.textContent = 'Detecting companion connection info...';
+  currentEl.innerHTML = '';
+  lanEl.innerHTML = '';
+  phoneEl.innerHTML = '';
+  usbEl.innerHTML = '';
+  const host = document.getElementById('glassesIp')?.value?.trim();
+  const wifiBase = host ? ('http://' + host + ':19110') : '';
+  try {
+    if (window.location.protocol.startsWith('http') && window.location.host) {
+      const r = await fetch('/api/server-info');
+      if (r.ok) {
+        const data = await r.json();
+        const currentUrl = data.url || window.location.origin;
+        const primaryIp = data.primary_lan_ip || '';
+        const phoneUrl = data.recommended_phone_url || (primaryIp ? ('https://' + primaryIp + ':19110') : '');
+        const usbUrl = data.recommended_usb_url || USB_URL;
+        const wifiUrl = data.recommended_wifi_url || (primaryIp ? ((data.scheme || 'http') + '://' + primaryIp + ':19110') : wifiBase);
+        statusEl.textContent = 'Companion server detected.';
+        currentEl.innerHTML = '<b>Current:</b> <code>' + currentUrl + '</code>';
+        lanEl.innerHTML = primaryIp ? '<b>Glasses LAN IP:</b> <code>' + primaryIp + '</code>' : '<b>Glasses LAN IP:</b> <span style="color:#ffb14a">not detected yet</span>';
+        phoneEl.innerHTML = phoneUrl ? '<b>Phone GPS URL:</b> <code>' + phoneUrl + '</code>' : '';
+        usbEl.innerHTML = '<b>USB:</b> <code>' + usbUrl + '</code>' + (wifiUrl ? '<br><b>Wi‑Fi:</b> <code>' + wifiUrl + '</code>' : '');
+        return;
+      }
+    }
+  } catch (e) { }
+  statusEl.textContent = 'Launcher page only — enter the glasses IP below to connect.';
+  currentEl.innerHTML = '<b>USB:</b> <code>' + USB_URL + '</code>';
+  lanEl.innerHTML = host ? '<b>Entered glasses IP:</b> <code>' + host + '</code>' : '<b>Glasses LAN IP:</b> <span style="color:#ffb14a">enter it below</span>';
+  phoneEl.innerHTML = host ? '<b>Phone GPS URL:</b> <code>https://' + host + ':19110</code>' : '';
+  usbEl.innerHTML = host ? '<b>Wi‑Fi:</b> <code>' + wifiBase + '</code>' : '';
+}
+
+// ── Tab switching ──
+function switchTab(tab) {
+  document.getElementById('tabUsb').className = 'tab' + (tab === 'usb' ? ' active' : '');
+  document.getElementById('tabWifi').className = 'tab' + (tab === 'wifi' ? ' active' : '');
+  document.getElementById('panelUsb').style.display = tab === 'usb' ? '' : 'none';
+  document.getElementById('panelWifi').style.display = tab === 'wifi' ? '' : 'none';
+  localStorage.setItem('tapinsight_tab', tab);
+}
+
+// ── USB connection ──
+function connectUsb() {
+  window.open(USB_URL, '_blank');
+}
+
+async function testUsb() {
+  const bar = document.getElementById('usbStatusBar');
+  bar.className = 'status info';
+  bar.textContent = 'Testing localhost:19110 ...';
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    await fetch(USB_URL, { signal: controller.signal, mode: 'no-cors' });
+    clearTimeout(timeout);
+    bar.className = 'status ok';
+    bar.textContent = 'Connection active! Click "Connect via localhost:19110" to open.';
+  } catch(e) {
+    if (e.name === 'AbortError') {
+      bar.className = 'status err';
+      bar.innerHTML = 'Not reachable. Run in terminal: <code style="background:#500;padding:2px 6px;border-radius:3px">adb forward tcp:19110 tcp:19110</code> then try again.';
+    } else {
+      bar.className = 'status info';
+      bar.textContent = 'Could not verify (CORS). Try clicking "Connect via localhost:19110" directly.';
+    }
+  }
+}
+
+// ── WiFi connection ──
 function getUrl() {
   const ip = document.getElementById('glassesIp').value.trim();
   if (!ip) { showStatus('Please enter the glasses IP address.', 'err'); return null; }
@@ -149,14 +279,13 @@ async function testConnection() {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
-    const r = await fetch(url, { signal: controller.signal, mode: 'no-cors' });
+    await fetch(url, { signal: controller.signal, mode: 'no-cors' });
     clearTimeout(timeout);
     showStatus('Connection appears reachable! Click "Connect to Companion App" to open it.', 'ok');
   } catch(e) {
     if (e.name === 'AbortError') {
       showStatus('Connection timed out. Check that the glasses are on, TapInsight is running, and the IP is correct.', 'err');
     } else {
-      // no-cors mode may throw but still succeed — try opening anyway
       showStatus('Could not verify connection (may be blocked by CORS). Try clicking "Connect to Companion App" directly.', 'info');
     }
   }
@@ -168,12 +297,29 @@ function showStatus(msg, type) {
   bar.textContent = msg;
 }
 
-// Save/restore IP from localStorage
+// ── Persist preferences ──
 const savedIp = localStorage.getItem('tapinsight_glasses_ip');
 if (savedIp) document.getElementById('glassesIp').value = savedIp;
 document.getElementById('glassesIp').addEventListener('change', function() {
   localStorage.setItem('tapinsight_glasses_ip', this.value.trim());
+  loadServerInfoCard();
 });
+const savedTab = localStorage.getItem('tapinsight_tab');
+if (savedTab === 'wifi') switchTab('wifi');
+loadServerInfoCard();
+
+// ── Auto-test USB on load ──
+(async function() {
+  try {
+    const c = new AbortController();
+    const t = setTimeout(() => c.abort(), 2000);
+    await fetch(USB_URL, { signal: c.signal, mode: 'no-cors' });
+    clearTimeout(t);
+    const bar = document.getElementById('usbStatusBar');
+    bar.className = 'status ok';
+    bar.textContent = 'USB forwarding detected! Click "Connect via localhost:19110" to open.';
+  } catch(e) { /* silent — no USB available */ }
+})();
 </script>
 </body>
 </html>

@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenClaw — TapInsight</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#e0e0e0;padding:16px;max-width:640px;margin:0 auto}
+h1{color:#e91e63;font-size:22px;margin-bottom:2px}
+.sub{color:#888;font-size:13px;margin-bottom:20px}
+.nav{display:flex;gap:0;margin-bottom:20px;border-radius:8px;overflow:hidden;border:1px solid #333}
+.nav a{flex:1;padding:10px;text-align:center;text-decoration:none;font-size:13px;font-weight:600;color:#aaa;background:#1a1a1a;transition:all .2s}
+.nav a.active{background:#e91e63;color:#fff}
+.nav a:hover:not(.active){background:#222}
+.section{background:#1a1a1a;border-radius:10px;padding:16px;margin-bottom:14px;border-left:3px solid #e91e63}
+.section-title{font-size:15px;font-weight:600;color:#fff;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.section-desc{font-size:12px;color:#999;margin-bottom:10px;line-height:1.5}
+label{display:flex;align-items:center;gap:6px;font-size:12px;color:#aaa;margin-bottom:4px;margin-top:10px}
+label:first-of-type{margin-top:0}
+input[type="text"],input[type="password"],input[type="number"]{width:100%;padding:10px;background:#111;border:1px solid #333;border-radius:6px;color:#fff;font-size:14px;font-family:inherit}
+input:focus{border-color:#e91e63;outline:none}
+select{width:100%;padding:10px;background:#111;border:1px solid #333;border-radius:6px;color:#fff;font-size:14px}
+.hint{font-size:11px;color:#666;margin-top:2px}
+.btn-row{display:flex;gap:10px;margin-top:16px}
+button{flex:1;padding:12px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:opacity .2s}
+button:active{opacity:.7}
+.btn-save{background:#e91e63;color:#fff}
+.btn-reset{background:#333;color:#ccc}
+.status{text-align:center;font-size:13px;margin-top:10px;min-height:20px}
+.status.ok{color:#4caf50}.status.err{color:#f44336}
+.toast{position:fixed;top:20px;left:50%;transform:translateX(-50%) translateY(-80px);padding:14px 28px;border-radius:10px;font-size:14px;font-weight:600;z-index:200;opacity:0;transition:transform .4s ease,opacity .4s ease;pointer-events:none;box-shadow:0 4px 20px rgba(0,0,0,.5);max-width:90%}
+.toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+.toast.ok{background:#1b5e20;color:#a5d6a7;border:1px solid #4caf50}
+.toast.err{background:#b71c1c;color:#ef9a9a;border:1px solid #f44336}
+</style>
+</head>
+<body>
+
+<h1>🦞 OpenClaw</h1>
+<p class="sub">TapClaw AI Agent Integration</p>
+
+<div class="nav">
+  <a href="/">Setup</a>
+  <a href="/browser">Browser</a>
+  <a href="/dashboard">Dashboard</a>
+  <a href="/radio">TapRadio</a>
+  <a href="/openclaw" class="active">OpenClaw</a>
+</div>
+
+<!-- Quick Setup -->
+<div class="section">
+  <div class="section-title">⚡ Quick Setup</div>
+  <p class="section-desc">On your TapClaw server, run <code style="background:#0a0f14;padding:2px 6px;border-radius:4px;color:#9ef3ff">openclaw qr</code> to display a QR code. Scan it here to auto-fill everything below.</p>
+  <button id="qrScanClawBtn" style="background:#00e676;color:#000;padding:10px 18px;font-size:13px;font-weight:600;border-radius:8px;border:none;cursor:pointer;width:100%;margin-bottom:8px" onclick="startQrScan()">
+    📷 Scan TapClaw QR Code
+  </button>
+  <div id="qrClawResult" style="display:none;margin-top:4px;padding:10px;background:#111;border-radius:6px;border:1px solid #333;font-size:12px"></div>
+  <div style="margin-top:8px">
+    <p style="font-size:11px;color:#666;margin-bottom:4px">Or paste a setup URL:</p>
+    <input type="text" id="clawSetupUrl" placeholder="tapinsight://openclaw?url=http://...&token=...">
+    <input type="hidden" id="openClawSetupCode">
+    <button style="background:#444;color:#ccc;padding:6px 12px;font-size:12px;border-radius:6px;border:none;cursor:pointer;width:100%;margin-top:6px" onclick="applyClawSetupUrl()">Apply Setup URL</button>
+  </div>
+</div>
+
+<!-- Connection Settings -->
+<div class="section">
+  <div class="section-title">🔧 Connection Settings</div>
+
+  <label>Enable TapClaw</label>
+  <select id="openClawEnabled"><option value="false">Disabled</option><option value="true">Enabled</option></select>
+  <div class="hint">Turn on to enable the "tapclaw" voice prefix for forwarding commands to your TapClaw agent.</div>
+
+  <label>Gateway URL</label>
+  <input type="text" id="openClawEndpoint" placeholder="ws://192.168.1.100:18789 or wss://your-tunnel.trycloudflare.com">
+  <div class="hint">Local: <code>ws://your-server-ip:18789</code> (same WiFi).<br>
+  Remote: <code>wss://your-tunnel.trycloudflare.com</code> (Cloudflare Tunnel — works over cell service).</div>
+
+  <label>Gateway Token</label>
+  <div style="position:relative">
+    <input type="password" id="openClawToken" placeholder="Your TapClaw bearer token">
+    <button onclick="togglePw('openClawToken')" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:11px;color:#e91e63;cursor:pointer;background:none;border:none">👁</button>
+  </div>
+  <div class="hint">Bearer token for authentication. Find it with <code>openclaw config get gateway.auth.token</code>.</div>
+
+  <label>Session ID</label>
+  <input type="text" id="openClawSessionId" placeholder="main">
+  <div class="hint">TapClaw session to use. <code>main</code> is your default. Use different IDs (e.g. <code>glasses</code>) to isolate interactions.</div>
+
+  <label>Timeout (seconds)</label>
+  <input type="number" id="openClawTimeoutSeconds" placeholder="0 (default 30s)" min="0" max="600">
+  <div class="hint">How long to wait for a TapClaw response. 0 = default (30s). Set to 300-600 for Deep Research tasks.</div>
+
+  <!-- Connection Status -->
+  <div id="clawConnectionStatus" style="margin-top:14px;padding:12px;background:#0a0f14;border:1px solid #1a3a4a;border-radius:8px;display:none">
+    <div style="font-size:11px;color:#666;margin-bottom:4px">Active Gateway</div>
+    <div id="clawActiveUrl" style="font-size:13px;color:#8fdfff;font-family:monospace;word-break:break-all"></div>
+    <div id="clawConnectionType" style="font-size:11px;color:#888;margin-top:4px"></div>
+  </div>
+</div>
+
+<!-- Heartbeat Settings -->
+<div class="section">
+  <div class="section-title">❤️ Heartbeat Display</div>
+  <p class="section-desc">TapClaw sends progress updates while working on tasks. These appear as scrolling text on your HUD.</p>
+
+  <label>Heartbeat Update Interval (seconds)</label>
+  <input type="number" id="openClawHeartbeatIntervalSeconds" placeholder="20" min="10" max="120">
+  <div class="hint">How often to refresh the heartbeat HUD display (10–120 seconds). Lower = more frequent updates, but uses more battery. Default: 20s.</div>
+</div>
+
+<!-- Test & Pair -->
+<div class="section">
+  <div class="section-title">🔗 Test & Pair</div>
+
+  <button id="testClawBtn" style="background:#333;color:#00e676;padding:10px 18px;font-size:13px;border-radius:8px;border:1px solid #1b5e20;cursor:pointer;width:100%" onclick="testClawConnection()">
+    🔗 Test TapClaw Connection
+  </button>
+  <div id="clawTestResult" style="display:none;margin-top:8px;padding:10px;background:#111;border-radius:6px;border:1px solid #333;font-size:12px"></div>
+</div>
+
+<!-- Remote Access -->
+<div class="section" style="border-left-color:#283593">
+  <div class="section-title" style="color:#7986cb">☁️ Remote Access</div>
+  <p class="section-desc">Access TapClaw from anywhere using a Cloudflare Tunnel. This creates a secure public URL for your local gateway.</p>
+  <div style="display:flex;gap:8px;margin-bottom:8px">
+    <button id="cfStatusBtn" style="flex:1;background:#1a237e;color:#9fa8da;padding:8px;font-size:12px;border-radius:6px;border:1px solid #283593;cursor:pointer" onclick="checkCfTunnel()">Check Tunnel Status</button>
+  </div>
+  <div id="cfTunnelStatus" style="display:none;padding:8px;background:#111;border-radius:6px;font-size:12px;margin-bottom:8px"></div>
+  <details style="margin-top:4px">
+    <summary style="font-size:12px;color:#7986cb;cursor:pointer">Setup instructions (named tunnel — recommended)</summary>
+    <div style="font-size:11px;color:#999;line-height:1.7;margin-top:8px">
+      A named tunnel gives you a permanent, stable URL. Requires a domain on Cloudflare (from ~$2/year).<br><br>
+      <b>Step 1 — Install cloudflared:</b><br>
+      <code style="background:#0a0f14;padding:2px 6px;border-radius:4px;color:#9ef3ff;display:inline-block;margin:4px 0">brew install cloudflared</code><br><br>
+      <b>Step 2 — Log in to your Cloudflare account:</b><br>
+      <code style="background:#0a0f14;padding:2px 6px;border-radius:4px;color:#9ef3ff;display:inline-block;margin:4px 0">cloudflared tunnel login</code><br>
+      A browser window opens. Authorize and select your domain.<br><br>
+      <b>Step 3 — Create the tunnel:</b><br>
+      <code style="background:#0a0f14;padding:2px 6px;border-radius:4px;color:#9ef3ff;display:inline-block;margin:4px 0">cloudflared tunnel create tapclaw</code><br>
+      Note the tunnel ID from the output.<br><br>
+      <b>Step 4 — Route DNS:</b><br>
+      <code style="background:#0a0f14;padding:2px 6px;border-radius:4px;color:#9ef3ff;display:inline-block;margin:4px 0">cloudflared tunnel route dns tapclaw tapclaw.yourdomain.com</code><br><br>
+      <b>Step 5 — Create config file:</b><br>
+      Create <code>~/.cloudflared/config.yml</code> with:<br>
+      <pre style="background:#0a0f14;padding:8px;border-radius:4px;color:#9ef3ff;margin:4px 0;white-space:pre-wrap;font-size:10px">tunnel: YOUR_TUNNEL_ID
+credentials-file: /Users/YOU/.cloudflared/YOUR_TUNNEL_ID.json
+
+ingress:
+  - hostname: tapclaw.yourdomain.com
+    service: http://localhost:18789
+  - hostname: relay.yourdomain.com
+    service: http://localhost:18790
+  - service: http_status:404</pre>
+      <b>Step 6 — Allow the origin in OpenClaw:</b><br>
+      <code style="background:#0a0f14;padding:2px 6px;border-radius:4px;color:#9ef3ff;display:inline-block;margin:4px 0">openclaw config set gateway.controlUi.allowedOrigins "https://tapclaw.yourdomain.com"</code><br>
+      Then restart the OpenClaw gateway.<br><br>
+      <b>Step 7 — Start the tunnel:</b><br>
+      <code style="background:#0a0f14;padding:2px 6px;border-radius:4px;color:#9ef3ff;display:inline-block;margin:4px 0">cloudflared tunnel run tapclaw</code><br><br>
+      <b>Auto-start on login:</b>
+      <code style="background:#0a0f14;padding:2px 6px;border-radius:4px;color:#9ef3ff;display:inline-block;margin:4px 0">brew services start cloudflared</code><br><br>
+      <b>Alternative:</b> <a href="https://tailscale.com" target="_blank" style="color:#7986cb">Tailscale</a> (mesh VPN, free, no domain needed)
+    </div>
+  </details>
+  <details style="margin-top:6px">
+    <summary style="font-size:12px;color:#7986cb;cursor:pointer">Troubleshooting</summary>
+    <div style="font-size:11px;color:#999;line-height:1.7;margin-top:8px">
+      <b>"origin not allowed"</b> — Add your tunnel domain to <code>~/.openclaw/openclaw.json</code> under <code>gateway.controlUi.allowedOrigins</code> and restart the gateway.<br><br>
+      <b>"503 Service Unavailable"</b> — The tunnel is running but has no ingress rules. Check <code>~/.cloudflared/config.yml</code>.<br><br>
+      <b>"Error 1033" in browser</b> — The tunnel isn't running. Start it with <code>cloudflared tunnel run tapclaw</code>.<br><br>
+      <b>Vision relay not working remotely</b> — Make sure your Cloudflare config includes the <code>relay.</code> subdomain entry.
+    </div>
+  </details>
+</div>
+
+<!-- Vision Relay -->
+<div class="section" style="border-left-color:#5e1b1b">
+  <div class="section-title" style="color:#ef9a9a">📷 Vision Relay</div>
+  <p class="section-desc">Required for camera vision commands like <code>tapclaw what do you see</code>. A small background service on your Mac receives camera frames and saves them to TapClaw's workspace.</p>
+  <div style="display:flex;gap:8px;margin-bottom:8px">
+    <button style="flex:1;background:#4a1515;color:#ef9a9a;padding:8px;font-size:12px;border-radius:6px;border:1px solid #5e1b1b;cursor:pointer" onclick="checkRelayStatus()">Check Relay</button>
+    <button style="flex:1;background:#4a1515;color:#ef9a9a;padding:8px;font-size:12px;border-radius:6px;border:1px solid #5e1b1b;cursor:pointer" onclick="viewSavedImages()">View Saved Images</button>
+  </div>
+  <div id="relayStatus" style="display:none;padding:8px;background:#111;border-radius:6px;font-size:12px;margin-bottom:8px"></div>
+  <details>
+    <summary style="font-size:12px;color:#ef9a9a;cursor:pointer">Install instructions</summary>
+    <div style="font-size:11px;color:#999;line-height:1.7;margin-top:8px">
+      Run once on your Mac (same machine as TapClaw):<br>
+      <code style="background:#0a0f14;padding:2px 6px;border-radius:4px;color:#9ef3ff;display:inline-block;margin:4px 0">pip3 install Pillow</code><br>
+      <code style="background:#0a0f14;padding:2px 6px;border-radius:4px;color:#9ef3ff;display:inline-block;margin:4px 0">bash tools/install-relay.sh</code><br><br>
+      This installs a background service that starts automatically on login.<br><br>
+      <b>Manual start:</b> <code style="background:#0a0f14;padding:2px 6px;border-radius:4px;color:#9ef3ff">python3 tools/image_relay.py</code><br>
+      <b>Uninstall:</b> <code style="background:#0a0f14;padding:2px 6px;border-radius:4px;color:#9ef3ff">bash tools/install-relay.sh --uninstall</code><br>
+      <b>Logs:</b> <code style="background:#0a0f14;padding:2px 6px;border-radius:4px;color:#9ef3ff">/tmp/tapclaw-image-relay.log</code>
+    </div>
+  </details>
+
+  <!-- Saved Images Gallery -->
+  <div id="imageGallery" style="margin-top:14px;display:none">
+    <div style="background:#111;border:1px solid #333;border-radius:8px;padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:13px;font-weight:600;color:#ccc">Captured Frames</div>
+        <button style="background:#333;color:#888;padding:4px 10px;font-size:11px;border-radius:4px;border:1px solid #444;cursor:pointer;flex:none" onclick="document.getElementById('imageGallery').style.display='none'">Close</button>
+      </div>
+      <div id="imageGalleryGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px"></div>
+      <div id="imageGalleryEmpty" style="text-align:center;color:#666;font-size:12px;padding:20px">No images found. Use a vision command to capture frames.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Media & Files -->
+<div class="section" style="border-left-color:#1b5e20">
+  <div class="section-title" style="color:#66bb6a">🎬 Media & Files</div>
+  <p class="section-desc">OpenClaw can display images, videos, and text on your glasses using TapBrowser. Use voice commands or let the AI decide what to show you.</p>
+
+  <div style="background:#0d1a0d;border:1px solid #1b5e20;border-radius:8px;padding:14px;margin-bottom:12px">
+    <div style="font-size:13px;font-weight:600;color:#66bb6a;margin-bottom:8px">Supported voice commands</div>
+    <div style="font-size:12px;color:#bbb;line-height:1.8">
+      <code>tapclaw show me the camera image</code> &mdash; Display latest captured frame<br>
+      <code>tapclaw open [url]</code> &mdash; Load any URL in TapBrowser<br>
+      <code>tapclaw show my saved images</code> &mdash; Browse archived camera frames<br>
+      <code>open [website]</code> &mdash; Direct browser navigation
+    </div>
+  </div>
+
+  <div style="background:#111;border:1px solid #333;border-radius:8px;padding:14px">
+    <div style="font-size:13px;font-weight:600;color:#ccc;margin-bottom:8px">How it works</div>
+    <div style="font-size:12px;color:#999;line-height:1.8">
+      OpenClaw's AI agent responds to your commands via the gateway. When it needs to show you something visual, the response is passed to Gemini which uses the <code>open_taplink</code> tool to display content in TapBrowser on your glasses.<br><br>
+      <b>Supported content types:</b><br>
+      &bull; Images (JPEG, PNG, GIF) &mdash; camera frames, photos, diagrams<br>
+      &bull; Videos (YouTube, direct links) &mdash; auto-plays in TapBrowser<br>
+      &bull; Web pages &mdash; any URL accessible from the glasses<br>
+      &bull; Text files &mdash; rendered in TapBrowser for reading<br><br>
+      <b>Camera frames</b> captured by the Vision Relay are stored in <code>~/.openclaw/workspace/</code> on your Mac. Archived frames are saved in <code>saved_photos/</code> organized by date.
+    </div>
+  </div>
+</div>
+
+<!-- Save / Reload -->
+<div class="btn-row">
+  <button class="btn-save" onclick="saveAll()">Save Configuration</button>
+  <button class="btn-reset" onclick="loadAll()">Reload</button>
+</div>
+<div id="status" class="status"></div>
+
+<!-- QR Scanner Modal -->
+<div id="qrModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.85);z-index:100;padding:20px;overflow-y:auto">
+  <div style="background:#1a1a1a;border-radius:12px;padding:20px;max-width:400px;margin:40px auto;border:1px solid #333;text-align:center">
+    <h3 style="color:#e91e63;margin-bottom:10px">Scan TapClaw QR Code</h3>
+    <p style="font-size:12px;color:#aaa;margin-bottom:12px">Point your phone camera at the QR code</p>
+    <div id="qrVideoWrap" style="position:relative;width:100%;max-width:340px;margin:0 auto;border-radius:10px;overflow:hidden;background:#000">
+      <video id="qrVideo" autoplay playsinline muted style="width:100%;display:block"></video>
+      <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:180px;height:180px;border:2px solid rgba(233,30,99,0.5);border-radius:12px;pointer-events:none"></div>
+      <canvas id="qrCanvas" style="display:none"></canvas>
+    </div>
+    <div id="qrFallbackWrap" style="display:none">
+      <p style="font-size:13px;color:#ccc;margin:12px 0 8px">This browser can't scan live video. Use one of these options:</p>
+      <div style="background:#0d1117;border:1px solid #333;border-radius:8px;padding:12px;margin:8px 0;text-align:left">
+        <p style="font-size:13px;color:#e91e63;margin:0 0 8px"><b>Option 1:</b> Use your Camera app</p>
+        <ol style="font-size:12px;color:#aaa;margin:0;padding-left:20px;line-height:1.6">
+          <li>Open your iPhone Camera app</li>
+          <li>Point at the QR code — a link banner appears</li>
+          <li>Long-press the banner → Copy Link</li>
+          <li>Come back here and paste below</li>
+        </ol>
+      </div>
+      <div style="background:#0d1117;border:1px solid #333;border-radius:8px;padding:12px;margin:8px 0;text-align:left">
+        <p style="font-size:13px;color:#e91e63;margin:0 0 8px"><b>Option 2:</b> Take a photo</p>
+        <input type="file" id="qrPhotoInput" accept="image/*" capture="environment" style="font-size:13px;color:#ccc;margin-top:4px;width:100%">
+        <p style="font-size:11px;color:#666;margin:4px 0 0">Take a photo of the QR code. We'll try to read it.</p>
+      </div>
+      <div style="margin-top:10px">
+        <input type="text" id="qrPasteInput" placeholder="Or paste the URL / QR data here"
+               style="width:100%;padding:10px;font-size:13px;background:#111;border:1px solid #444;border-radius:6px;color:#fff;box-sizing:border-box">
+        <button onclick="handleQrPaste()" style="margin-top:8px;background:#00e676;color:#000;padding:8px 16px;font-size:13px;font-weight:600;border-radius:6px;border:none;cursor:pointer;width:100%">Apply</button>
+      </div>
+    </div>
+    <div id="qrStatus" style="font-size:12px;color:#888;margin-top:10px;min-height:20px"></div>
+    <button onclick="stopQrScan()" style="background:#333;color:#ccc;padding:8px 16px;border:none;border-radius:6px;cursor:pointer;margin-top:12px;font-size:13px">Cancel</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Field Mapping ────────────────────────────────────────────
+const FIELDS = {
+  openClawEnabled:     { key: 'openclaw_enabled',          type: 'bool'   },
+  openClawEndpoint:    { key: 'openclaw_endpoint',         type: 'string' },
+  openClawToken:       { key: 'openclaw_token',            type: 'string' },
+  openClawSessionId:   { key: 'openclaw_session_id',       type: 'string' },
+  openClawTimeoutSeconds: { key: 'openclaw_timeout_seconds', type: 'int' },
+  openClawHeartbeatIntervalSeconds: { key: 'openclaw_heartbeat_interval_seconds', type: 'int' }
+};
+
+// ── Config API ───────────────────────────────────────────────
+function apiHeaders() {
+  return { 'Content-Type': 'application/json' };
+}
+
+let _configCache = {};
+
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/config');
+    if (r.ok) _configCache = await r.json();
+  } catch (e) { console.error('Load failed:', e); }
+}
+
+async function saveConfig(payload) {
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: apiHeaders(),
+      body: JSON.stringify(payload)
+    });
+    return r.ok;
+  } catch (e) { console.error('Save failed:', e); return false; }
+}
+
+// ── Load / Save All ──────────────────────────────────────────
+async function loadAll() {
+  await loadConfig();
+  for (const [id, cfg] of Object.entries(FIELDS)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const raw = _configCache[cfg.key];
+    if (raw == null) continue;
+    if (cfg.type === 'bool') {
+      el.value = (raw === true || raw === 'true') ? 'true' : 'false';
+    } else {
+      el.value = String(raw);
+    }
+  }
+  updateClawConnectionStatus();
+}
+
+async function saveAll() {
+  const payload = {};
+  for (const [id, cfg] of Object.entries(FIELDS)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const v = el.value.trim();
+    if (cfg.type === 'bool') payload[cfg.key] = v === 'true';
+    else if (cfg.type === 'int') payload[cfg.key] = parseInt(v, 10) || 0;
+    else if (cfg.type === 'float') payload[cfg.key] = parseFloat(v) || 0;
+    else payload[cfg.key] = v;
+  }
+  const ok = await saveConfig(payload);
+  showToast(ok ? 'Configuration saved!' : 'Save failed.', ok ? 'ok' : 'err');
+}
+
+// ── Toast ────────────────────────────────────────────────────
+function showToast(msg, type) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast ' + type + ' show';
+  setTimeout(() => { el.className = 'toast'; }, 2500);
+}
+
+// ── Password Toggle ──────────────────────────────────────────
+function togglePw(id) {
+  const el = document.getElementById(id);
+  el.type = el.type === 'password' ? 'text' : 'password';
+}
+
+// ── Connection Status ────────────────────────────────────────
+function updateClawConnectionStatus() {
+  const url = (document.getElementById('openClawEndpoint')?.value || '').trim();
+  const panel = document.getElementById('clawConnectionStatus');
+  const urlEl = document.getElementById('clawActiveUrl');
+  const typeEl = document.getElementById('clawConnectionType');
+  if (!panel || !urlEl || !typeEl) return;
+  if (!url) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  urlEl.textContent = url;
+  if (url.match(/^(wss:|https:)\/\//) && !url.match(/\d+\.\d+\.\d+\.\d+/)) {
+    typeEl.innerHTML = '🌐 Remote (Cloudflare Tunnel / public domain) — works over cell service';
+    typeEl.style.color = '#66bb6a';
+  } else if (url.match(/^(wss:|https:)/)) {
+    typeEl.innerHTML = '🔒 Secure WebSocket (wss) — encrypted connection';
+    typeEl.style.color = '#8fdfff';
+  } else {
+    typeEl.innerHTML = '🏠 Local network (ws) — same WiFi only';
+    typeEl.style.color = '#ffb14a';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const ep = document.getElementById('openClawEndpoint');
+  if (ep) ep.addEventListener('input', updateClawConnectionStatus);
+});
+
+// ── Test Connection ──────────────────────────────────────────
+function renderClawStatus(html, scrollTargetId) {
+  const boxes = [
+    document.getElementById('qrClawResult'),
+    document.getElementById('clawTestResult')
+  ].filter(Boolean);
+  boxes.forEach(box => { box.style.display = 'block'; box.innerHTML = html; });
+  const target = document.getElementById(scrollTargetId || 'clawTestResult') || boxes[0];
+  target?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderClawDebugDetails(debug) {
+  if (!debug || typeof debug !== 'object') return '';
+  const lines = [];
+  if (debug.gatewayErrorCode) lines.push('<b>Gateway code:</b> <code>' + String(debug.gatewayErrorCode).replace(/</g, '&lt;') + '</code>');
+  if (debug.closeCode || debug.closeReason) lines.push('<b>Socket close:</b> <code>' + String(debug.closeCode || '').replace(/</g, '&lt;') + '</code> ' + String(debug.closeReason || '').replace(/</g, '&lt;'));
+  if (debug.endpoint) lines.push('<b>Endpoint:</b> <code>' + String(debug.endpoint).replace(/</g, '&lt;') + '</code>');
+  if (debug.deviceId) lines.push('<b>Device ID:</b> <code>' + String(debug.deviceId).replace(/</g, '&lt;') + '</code>');
+  if (!lines.length) return '';
+  return '<details style="margin-top:8px;font-size:11px;color:#aaa"><summary style="cursor:pointer;color:#8fdfff">Debug details</summary><div style="margin-top:6px;padding:8px;background:#0a0a0a;border-radius:6px;border:1px solid #222">' + lines.join('<br>') + '</div></details>';
+}
+
+async function testClawConnection() {
+  renderClawStatus('<span style="color:#888">⏳ Testing connection from the glasses...</span>', 'clawTestResult');
+  const endpoint = document.getElementById('openClawEndpoint')?.value?.trim();
+  const token = document.getElementById('openClawToken')?.value?.trim();
+  const sessionId = document.getElementById('openClawSessionId')?.value?.trim() || 'main';
+  const timeoutSeconds = parseInt(document.getElementById('openClawTimeoutSeconds')?.value || '0', 10) || 0;
+  if (!endpoint) {
+    renderClawStatus('<span style="color:#f44336">⚠ No gateway URL configured.</span> Set it above.', 'clawTestResult');
+    return;
+  }
+  try {
+    const resp = await fetch('/api/verify/openclaw', {
+      method: 'POST',
+      headers: apiHeaders(),
+      body: JSON.stringify({ endpoint, token, session_id: sessionId, timeout_seconds: timeoutSeconds })
+    });
+    const data = await resp.json().catch(() => ({}));
+    const endpointLabel = String(data.endpoint || endpoint).replace(/</g, '&lt;');
+    if (data.status === 'ok') {
+      renderClawStatus('<span style="color:#00e676">✓ TapClaw reachable from the glasses.</span><br>'
+        + '<b>Gateway:</b> ' + endpointLabel + '<br>'
+        + (data.httpStatus ? '<b>HTTP:</b> ' + data.httpStatus + '<br>' : '')
+        + (data.version ? '<b>Version:</b> ' + data.version + '<br>' : '')
+        + (data.model ? '<b>Model:</b> ' + data.model + '<br>' : ''),
+        'clawTestResult');
+      return;
+    }
+    if (data.status === 'auth_failed') {
+      renderClawStatus('<span style="color:#ff9800">⚠ TapClaw responded, but the bearer token was rejected.</span><br>'
+        + '<b>Gateway:</b> ' + endpointLabel + '<br>'
+        + '<span style="color:#aaa">Run <code>openclaw config get gateway.auth.token</code> and paste that value.</span>',
+        'clawTestResult');
+      return;
+    }
+    renderClawStatus('<span style="color:#f44336">⚠ TapClaw test failed.</span><br>'
+      + '<b>Gateway:</b> ' + endpointLabel + '<br>'
+      + (data.message ? '<span style="color:#aaa">' + String(data.message).replace(/</g, '&lt;') + '</span>' : ''),
+      'clawTestResult');
+  } catch (e) {
+    renderClawStatus('<span style="color:#f44336">⚠ TapClaw test failed.</span><br>'
+      + '<span style="color:#aaa">' + String(e.message || e).replace(/</g, '&lt;') + '</span>',
+      'clawTestResult');
+  }
+}
+
+// ── Pairing ──────────────────────────────────────────────────
+async function startClawPairing() {
+  const setupCode = document.getElementById('openClawSetupCode')?.value?.trim();
+  const endpoint = document.getElementById('openClawEndpoint')?.value?.trim();
+  if (!setupCode) {
+    renderClawStatus('<span style="color:#f44336">⚠ This QR did not include a TapClaw setup/bootstrap code.</span>');
+    return;
+  }
+  renderClawStatus('<span style="color:#888">⏳ Starting TapClaw pairing from the glasses...</span>');
+  try {
+    const resp = await fetch('/api/openclaw/pair', {
+      method: 'POST',
+      headers: apiHeaders(),
+      body: JSON.stringify({ setup_code: setupCode, endpoint })
+    });
+    const rawText = await resp.text();
+    let data = {};
+    try { data = rawText ? JSON.parse(rawText) : {}; } catch (_) { data = { message: rawText || '' }; }
+    const endpointLabel = String(data.endpoint || endpoint || '').replace(/</g, '&lt;');
+    const debugHtml = renderClawDebugDetails(data.debug);
+    if (data.status === 'pending_approval') {
+      renderClawStatus('<span style="color:#ffb14a">⚠ Pairing request created.</span><br>'
+        + '<b>Gateway:</b> ' + endpointLabel + '<br>'
+        + (data.requestId ? '<b>Request ID:</b> <code>' + String(data.requestId).replace(/</g, '&lt;') + '</code><br>' : '')
+        + '<span style="color:#aaa">Approve it on your TapClaw server with <code>openclaw devices approve ' + String(data.requestId || '--latest').replace(/</g, '&lt;') + '</code></span>'
+        + debugHtml
+        + '<br><button onclick="startClawPairing()" style="margin-top:8px;background:#333;color:#8fdfff;padding:8px 14px;font-size:12px;border-radius:6px;border:1px solid #2f5b70;cursor:pointer;width:100%">↻ Check Pairing Again</button>');
+      return;
+    }
+    if (data.status === 'approved') {
+      renderClawStatus('<span style="color:#00e676">✓ TapClaw pairing completed.</span><br>'
+        + '<b>Gateway:</b> ' + endpointLabel + '<br>'
+        + (data.deviceId ? '<b>Device ID:</b> <code>' + String(data.deviceId).replace(/</g, '&lt;') + '</code><br>' : '')
+        + debugHtml);
+      return;
+    }
+    const msg = String(data.message || 'Unknown pairing error.').replace(/</g, '&lt;');
+    renderClawStatus('<span style="color:#f44336">⚠ TapClaw pairing failed.</span><br>' + '<span style="color:#aaa">' + msg + '</span>' + debugHtml);
+  } catch (e) {
+    renderClawStatus('<span style="color:#f44336">⚠ TapClaw pairing failed.</span><br>'
+      + '<span style="color:#aaa">' + String(e.message || e).replace(/</g, '&lt;') + '</span>');
+  }
+}
+
+// ── QR Scanner ───────────────────────────────────────────────
+let qrStream = null;
+let qrScanInterval = null;
+
+function startQrScan() {
+  const modal = document.getElementById('qrModal');
+  modal.style.display = 'block';
+  const video = document.getElementById('qrVideo');
+  const canvas = document.getElementById('qrCanvas');
+  const ctx = canvas.getContext('2d');
+  const statusEl = document.getElementById('qrStatus');
+  const fallback = document.getElementById('qrFallbackWrap');
+  const videoWrap = document.getElementById('qrVideoWrap');
+
+  if (typeof BarcodeDetector === 'undefined') {
+    videoWrap.style.display = 'none';
+    fallback.style.display = 'block';
+    statusEl.textContent = 'Camera QR scanning not supported. Use alternatives above.';
+    return;
+  }
+
+  fallback.style.display = 'none';
+  videoWrap.style.display = 'block';
+  statusEl.textContent = 'Starting camera...';
+
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    .then(stream => {
+      qrStream = stream;
+      video.srcObject = stream;
+      video.play();
+      statusEl.textContent = 'Scanning...';
+      const detector = new BarcodeDetector({ formats: ['qr_code'] });
+      qrScanInterval = setInterval(async () => {
+        if (video.readyState < 2) return;
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0);
+        try {
+          const barcodes = await detector.detect(canvas);
+          if (barcodes.length > 0) {
+            stopQrScan();
+            applyClawQr(barcodes[0].rawValue);
+          }
+        } catch (_) {}
+      }, 300);
+    })
+    .catch(e => {
+      videoWrap.style.display = 'none';
+      fallback.style.display = 'block';
+      statusEl.textContent = 'Camera access denied. Use alternatives above.';
+    });
+}
+
+function stopQrScan() {
+  if (qrScanInterval) { clearInterval(qrScanInterval); qrScanInterval = null; }
+  if (qrStream) { qrStream.getTracks().forEach(t => t.stop()); qrStream = null; }
+  document.getElementById('qrModal').style.display = 'none';
+}
+
+function handleQrPaste() {
+  const input = document.getElementById('qrPasteInput')?.value?.trim();
+  if (input) { stopQrScan(); applyClawQr(input); }
+}
+
+function applyClawSetupUrl() {
+  const input = document.getElementById('clawSetupUrl').value.trim();
+  if (!input) return;
+  applyClawQr(input);
+}
+
+function applyClawQr(data) {
+  let url = '', token = '', sessionId = '', setupCode = '';
+  try {
+    if (data.includes('tapinsight://openclaw')) {
+      const parsed = new URL(data.replace('tapinsight://', 'https://tapinsight/'));
+      url = parsed.searchParams.get('url') || '';
+      token = parsed.searchParams.get('token') || '';
+      sessionId = parsed.searchParams.get('session') || '';
+      setupCode = parsed.searchParams.get('setup_code') || '';
+    } else if (data.trim().startsWith('{')) {
+      const json = JSON.parse(data);
+      // TapClaw native format
+      url = json.gatewayUrl || json.url || json.endpoint || '';
+      token = json.auth?.token || json.token || '';
+      sessionId = json.sessionId || json.session || '';
+      setupCode = json.setupCode || json.setup_code || json.bootstrapToken || '';
+    } else if (data.startsWith('http://') || data.startsWith('https://') || data.startsWith('ws://') || data.startsWith('wss://')) {
+      url = data;
+    }
+  } catch (e) {
+    renderClawStatus('<span style="color:#f44336">⚠ Could not parse QR data.</span><br><span style="color:#aaa">' + String(e.message).replace(/</g, '&lt;') + '</span>');
+    return;
+  }
+
+  if (url) document.getElementById('openClawEndpoint').value = url;
+  if (token) document.getElementById('openClawToken').value = token;
+  if (sessionId) document.getElementById('openClawSessionId').value = sessionId;
+  if (setupCode) document.getElementById('openClawSetupCode').value = setupCode;
+  updateClawConnectionStatus();
+
+  let statusHtml = '<span style="color:#00e676">✓ QR data applied.</span>';
+  if (url) statusHtml += '<br><b>Gateway:</b> ' + url.replace(/</g, '&lt;');
+  if (token) statusHtml += '<br><b>Token:</b> •••' + token.slice(-6);
+  if (setupCode) {
+    statusHtml += '<br><b>Setup code detected</b> — <button onclick="startClawPairing()" style="background:#e91e63;color:#fff;padding:6px 14px;font-size:12px;border-radius:6px;border:none;cursor:pointer;margin-top:4px">Start Pairing</button>';
+  } else {
+    statusHtml += '<br>Tap <b>Test Connection</b> below to verify.';
+  }
+  renderClawStatus(statusHtml, 'qrClawResult');
+}
+
+// ── Vision Relay & Cloudflare ────────────────────────────────
+function getRelayBaseUrl() { return '/api/relay'; }
+
+async function checkRelayStatus() {
+  const el = document.getElementById('relayStatus');
+  el.style.display = 'block';
+  el.innerHTML = '<span style="color:#888">Checking relay...</span>';
+  try {
+    const resp = await fetch(getRelayBaseUrl() + '/status', { signal: AbortSignal.timeout(5000) });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    if (data.ok) {
+      const age = data.ageSeconds >= 0 ? data.ageSeconds + 's ago' : 'none';
+      const size = data.sizeBytes > 0 ? (data.sizeBytes / 1024).toFixed(0) + 'KB' : '—';
+      el.innerHTML = '<span style="color:#66bb6a">✓ Relay running</span>'
+        + '<br><span style="color:#aaa">Last frame: ' + size + ' (' + age + ')</span>';
+    } else {
+      el.innerHTML = '<span style="color:#f44336">Relay responded but reported an error.</span>';
+    }
+  } catch (e) {
+    el.innerHTML = '<span style="color:#f44336">⚠ Relay not reachable</span>'
+      + '<br><span style="color:#888">Make sure the image relay is running on your Mac (<code>python3 tools/image_relay.py</code>).</span>';
+  }
+}
+
+async function checkCfTunnel() {
+  const el = document.getElementById('cfTunnelStatus');
+  el.style.display = 'block';
+  const url = (document.getElementById('openClawEndpoint')?.value || '').trim();
+  if (!url) { el.innerHTML = '<span style="color:#888">No gateway URL configured.</span>'; return; }
+  const isRemote = url.match(/^(wss:|https:)\/\//) && !url.match(/\d+\.\d+\.\d+\.\d+/);
+  if (isRemote) {
+    el.innerHTML = '<span style="color:#66bb6a">✓ Remote URL detected</span><br><span style="color:#aaa">' + url.replace(/</g,'&lt;') + '</span>';
+  } else if (url.match(/^(ws:|http:)/)) {
+    el.innerHTML = '<span style="color:#ffb14a">⚠ Local URL only</span><br><span style="color:#aaa">' + url.replace(/</g,'&lt;') + '</span>';
+  } else {
+    el.innerHTML = '<span style="color:#888">URL format not recognized.</span>';
+  }
+}
+
+async function viewSavedImages() {
+  const gallery = document.getElementById('imageGallery');
+  const grid = document.getElementById('imageGalleryGrid');
+  const empty = document.getElementById('imageGalleryEmpty');
+  gallery.style.display = 'block';
+  grid.innerHTML = '';
+  empty.style.display = 'none';
+  try {
+    const resp = await fetch(getRelayBaseUrl() + '/status', { signal: AbortSignal.timeout(5000) });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    if (data.ok && data.hasFrame) {
+      grid.innerHTML = '<div style="text-align:center">'
+        + '<img src="' + getRelayBaseUrl() + '/latest" onerror="this.style.display=\'none\'" style="max-width:100%;border-radius:6px;border:1px solid #333" />'
+        + '<div style="font-size:11px;color:#888;margin-top:4px">Latest frame (' + (data.sizeBytes/1024).toFixed(0) + 'KB, ' + data.ageSeconds + 's ago)</div></div>';
+    } else {
+      empty.style.display = 'block';
+    }
+  } catch (_) {
+    empty.style.display = 'block';
+    empty.textContent = 'Cannot reach the image relay. Is it running on your Mac?';
+  }
+  gallery.scrollIntoView({ behavior: 'smooth' });
+}
+
+// ── Photo-based QR fallback ──────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  const photoInput = document.getElementById('qrPhotoInput');
+  if (photoInput) {
+    photoInput.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      if (typeof BarcodeDetector === 'undefined') {
+        document.getElementById('qrStatus').textContent = 'QR detection not supported. Paste the URL instead.';
+        return;
+      }
+      try {
+        const bitmap = await createImageBitmap(file);
+        const detector = new BarcodeDetector({ formats: ['qr_code'] });
+        const barcodes = await detector.detect(bitmap);
+        if (barcodes.length > 0) {
+          stopQrScan();
+          applyClawQr(barcodes[0].rawValue);
+        } else {
+          document.getElementById('qrStatus').textContent = 'No QR code found in the photo. Try again or paste the URL.';
+        }
+      } catch (err) {
+        document.getElementById('qrStatus').textContent = 'Error reading photo: ' + err.message;
+      }
+    });
+  }
+});
+
+// ── Init ─────────────────────────────────────────────────────
+loadAll();
+</script>
+</body>
+</html>

@@ -89,13 +89,13 @@
         android:focusable="true"/>
 
     <com.TapLinkX3.app.FontIconView
-        android:id="@+id/btnAnchor"
+        android:id="@+id/btnTts"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
         android:background="@drawable/nav_button_background"
         android:gravity="center"
-        android:text="@string/fa_anchor"
+        android:text="@string/fa_volume_high"
         android:textColor="#FFFFFF"
         android:textSize="16sp"
         android:clickable="true"

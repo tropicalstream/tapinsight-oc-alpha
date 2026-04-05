@@ -1,13 +1,10 @@
 package com.rayneo.visionclaw.core.network
 
+import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
 
 /**
@@ -15,7 +12,10 @@ import java.net.URLEncoder
  *
  * Requires a Google Maps API key with the Directions API enabled.
  */
-class GoogleDirectionsClient(private val apiKeyProvider: () -> String?) {
+class GoogleDirectionsClient(
+    private val apiKeyProvider: () -> String?,
+    private val context: Context? = null
+) {
 
     companion object {
         private const val TAG = "GoogleDirections"
@@ -71,19 +71,13 @@ class GoogleDirectionsClient(private val apiKeyProvider: () -> String?) {
                     "&departure_time=now" +
                     "&key=$apiKey"
 
-            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
-            }
-
-            val responseCode = conn.responseCode
-            val body = BufferedReader(
-                InputStreamReader(
-                    if (responseCode in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream),
-                    Charsets.UTF_8
-                )
-            ).use { it.readText() }
+            val response = ActiveNetworkHttp.get(
+                url = urlStr,
+                connectTimeoutMs = CONNECT_TIMEOUT_MS,
+                readTimeoutMs = READ_TIMEOUT_MS
+            )
+            val responseCode = response.code
+            val body = response.body
 
             if (responseCode !in 200..299) {
                 Log.e(TAG, "Directions HTTP $responseCode: $body")

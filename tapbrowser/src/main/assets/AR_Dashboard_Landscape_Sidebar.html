@@ -836,6 +836,7 @@
       deezer: { name: 'Deezer', url: 'https://www.deezer.com' },
       audiomack: { name: 'Audiomack', url: 'https://audiomack.com' },
       soundcloud: { name: 'SoundCloud', url: 'https://soundcloud.com' },
+      jamendo: { name: 'Jamendo Music', url: 'https://www.jamendo.com/radios' },
 
       // Creativity / Multimedia
       photopea: { name: 'Photopea (Photo)', url: 'https://www.photopea.com' },
@@ -883,7 +884,7 @@
       { title: 'Navigation / Entertainment', cls: 'sec-nav', keys: ['youtube', 'informaltech', 'gmaps', 'minijuegos', 'tiktok'] },
       { title: 'AI / Chatbots', cls: 'sec-llm', keys: ['gemini', 'googleaistudio', 'jules', 'perplexity', 'chatgpt', 'claude', 'deepseek', 'grok'] },
       { title: 'Social / Communication', cls: 'sec-social', keys: ['gmessages', 'discord', 'whatsapp', 'instagram', 'reddit', 'telegram'] },
-      { title: 'Music / Streaming', cls: 'sec-music', keys: ['tapradio', 'ytmusic', 'spotify', 'applemusic', 'tidal', 'deezer', 'audiomack', 'soundcloud'] },
+      { title: 'Music / Streaming', cls: 'sec-music', keys: ['tapradio', 'ytmusic', 'spotify', 'applemusic', 'tidal', 'deezer', 'audiomack', 'soundcloud', 'jamendo'] },
       { title: 'Creativity / Multimedia', cls: 'sec-creative', keys: ['photopea', 'clipchamp', 'bandlab', 'wireframe', 'kleki'] },
       { title: 'Productivity / Documents', cls: 'sec-prod', keys: ['todoist', 'stackedit', 'sejda'] },
       { title: 'Utilities / Reference', cls: 'sec-util', keys: ['wikipedia', 'translate', 'wolfram'] },
@@ -955,6 +956,36 @@
       return changed;
     }
 
+    function ensureTapRadioMigration(dashboardState) {
+      let changed = false;
+      if (!dashboardState.apps.tapradio) {
+        dashboardState.apps.tapradio = { ...defaultApps.tapradio };
+        changed = true;
+      }
+
+      let music = dashboardState.groups.find(
+        group => normalizeTitle(group.title).toLowerCase() === 'music / streaming'
+      );
+
+      if (!music) {
+        music = { title: 'Music / Streaming', cls: 'sec-music', keys: ['tapradio'] };
+        dashboardState.groups.push(music);
+        changed = true;
+      }
+
+      if (!Array.isArray(music.keys)) {
+        music.keys = [];
+        changed = true;
+      }
+
+      if (!music.keys.includes('tapradio')) {
+        music.keys.unshift('tapradio');
+        changed = true;
+      }
+
+      return changed;
+    }
+
     function loadState() {
       const fallbackGroups = JSON.parse(JSON.stringify(defaultGroups));
       fallbackGroups.forEach(g => {
@@ -982,7 +1013,8 @@
 
     let state = loadState();
     const migratedReddit = ensureRedditMigration(state);
-    if (sanitizeGroups(state.groups) || migratedReddit) {
+    const migratedTapRadio = ensureTapRadioMigration(state);
+    if (sanitizeGroups(state.groups) || migratedReddit || migratedTapRadio) {
       persistState();
     }
 

@@ -61,6 +61,10 @@ dependencies {
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
+    // ExoPlayer (Media3) for native radio streaming with configurable buffers.
+    // MediaPlayer has a tiny fixed buffer that causes ~14s rebuffer stutters on MP3 streams.
+    implementation("androidx.media3:media3-exoplayer:1.5.1")
+
     compileOnly(files("libs/MercuryAndroidSDK-v0.2.2-20250717110238_48b655b3.aar"))
     compileOnly(files("libs/RayNeoIPCSDK-For-Android-V0.1.0-20231128201840_9b41f025.aar"))
 

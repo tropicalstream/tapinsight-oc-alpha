@@ -28,15 +28,16 @@ body{display:flex;flex-direction:column;max-width:960px;max-height:480px;margin:
 .ctrl:active{background:var(--accent);color:#000}
 .ctrl.playing{background:var(--accent);color:#000;box-shadow:0 0 12px var(--glow)}
 
-.genres{display:flex;gap:0;padding:0 8px;flex-shrink:0;overflow-x:auto;
-  border-bottom:1px solid var(--border);-webkit-overflow-scrolling:touch}
+.genres{display:grid;grid-auto-flow:column;grid-template-rows:repeat(2, auto);gap:0 4px;
+  padding:2px 8px 4px;flex-shrink:0;overflow-x:auto;overflow-y:hidden;
+  border-bottom:1px solid var(--border);-webkit-overflow-scrolling:touch;align-items:end}
 .genres::-webkit-scrollbar{display:none}
 .genre{padding:7px 12px;font-size:11px;color:var(--muted);cursor:pointer;
   border-bottom:2px solid transparent;white-space:nowrap;
   touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:all .15s}
 .genre.active{color:var(--accent);border-bottom-color:var(--accent)}
-.genre.fav{color:var(--fav)}
-.genre.fav.active{color:var(--fav);border-bottom-color:var(--fav)}
+.genre.fav{color:var(--accent);font-weight:500}
+.genre.fav.active{color:var(--accent);border-bottom-color:var(--accent)}
 
 .stations{flex:1;overflow-y:auto;padding:6px 8px;scroll-behavior:smooth;
   -webkit-overflow-scrolling:touch}
@@ -69,7 +70,8 @@ body{display:flex;flex-direction:column;max-width:960px;max-height:480px;margin:
 .vol-wrap input[type=range]{flex:1;height:4px;-webkit-appearance:none;
   background:rgba(255,255,255,.15);border-radius:4px;outline:none}
 .vol-wrap input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;
-  width:14px;height:14px;border-radius:50%;background:var(--accent);cursor:pointer}
+  width:1px;height:16px;border-radius:0;background:transparent;
+  border:none;cursor:pointer;box-shadow:none;opacity:0}
 .vol-pct{font-size:10px;color:var(--muted);min-width:28px;text-align:right}
 
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;
@@ -147,6 +149,66 @@ let stations = [];
 let currentIdx = -1;
 let editIdx = -1;
 let activeGenre = 'All';
+let externalPlaybackState = { playing: false, stationName: '', genre: '', updatedAt: 0 };
+let nativePlaybackState = {
+  available: false,
+  playing: false,
+  preparing: false,
+  buffering: false,
+  stationName: '',
+  genre: '',
+  url: '',
+  error: '',
+  updatedAt: 0
+};
+
+function hasNativeRadioBridge() {
+  return typeof AndroidInterface !== 'undefined' && typeof AndroidInterface.playNativeRadioStream === 'function';
+}
+
+function applyNativeRadioState(rawState) {
+  try {
+    const parsed = typeof rawState === 'string' ? JSON.parse(rawState) : (rawState || {});
+    nativePlaybackState = Object.assign({
+      available: hasNativeRadioBridge(),
+      playing: false,
+      preparing: false,
+      buffering: false,
+      stationName: '',
+      genre: '',
+      url: '',
+      error: '',
+      updatedAt: Date.now()
+    }, parsed || {});
+    if (nativePlaybackState.stationName) {
+      const matchedIdx = stations.findIndex(s => s.name === nativePlaybackState.stationName);
+      if (matchedIdx >= 0) currentIdx = matchedIdx;
+    }
+    try {
+      if (window.MediaInterface && window.MediaInterface.onMediaStateChanged) {
+        window.MediaInterface.onMediaStateChanged(!!(nativePlaybackState.playing || nativePlaybackState.preparing || nativePlaybackState.buffering));
+      }
+    } catch (e) {}
+  } catch (e) {
+    console.warn('applyNativeRadioState failed:', e);
+  }
+}
+
+function syncNativeRadioState() {
+  if (!hasNativeRadioBridge()) return;
+  nativePlaybackState.available = true;
+  try {
+    const raw = AndroidInterface.getNativeRadioPlaybackState();
+    if (raw) applyNativeRadioState(raw);
+  } catch (e) {
+    console.warn('getNativeRadioPlaybackState failed:', e);
+  }
+}
+
+window.tapRadioNativePlaybackUpdate = function(state) {
+  applyNativeRadioState(state);
+  updateUI();
+};
 
 const DEFAULT_STATIONS = [
   { name: 'SomaFM Groove Salad', url: 'https://ice1.somafm.com/groovesalad-256-mp3', genre: 'Chill', desc: 'Ambient/downtempo for your day', fav: true },
@@ -172,9 +234,12 @@ const DEFAULT_STATIONS = [
 // ── Init ──────────────────────────────────────────────────────────
 async function init() {
   await loadStations();
+  syncPlaybackUiFromExternalState();
+  syncNativeRadioState();
   renderGenres();
   renderStations();
   audio.volume = 0.7;
+  updateUI();
 }
 
 async function loadStations() {
@@ -233,13 +298,30 @@ function save() {
   } catch(e) {}
 }
 
+const GENRE_BUCKETS = [
+  { name: 'Ambient', match: /(ambient|drone|space|meditation)/i },
+  { name: 'Chill', match: /(chill|mellow|downtempo|lush)/i },
+  { name: 'Electronic', match: /(electronic|house|future soul|hip-hop|beats|fluid|blend)/i },
+  { name: 'Rock', match: /(rock|indie|pop|punk|wave|alt)/i },
+  { name: 'Jazz', match: /(jazz|lounge|bossa|spy-fi)/i },
+  { name: 'Classical', match: /(classical|orchestra|opera)/i },
+  { name: 'News', match: /(news|npr|bbc|program)/i },
+  { name: 'Mix', match: /(eclectic|folk|roots|world|americana|celtic)/i }
+];
+
+function normalizeGenre(genre) {
+  const raw = String(genre || '').trim();
+  if (!raw) return 'Mix';
+  const bucket = GENRE_BUCKETS.find(entry => entry.match.test(raw));
+  return bucket ? bucket.name : 'Mix';
+}
+
 // ── Genre tabs ────────────────────────────────────────────────────
 function getGenres() {
-  const set = new Set();
-  stations.forEach(s => { if (s.genre) set.add(s.genre); });
-  const sorted = Array.from(set).sort();
-  // Favorites always first, then All, then genres
-  return ['Favorites', 'All', ...sorted];
+  const present = new Set();
+  stations.forEach(s => { present.add(normalizeGenre(s.genre)); });
+  const ordered = GENRE_BUCKETS.map(g => g.name).filter(name => present.has(name));
+  return ['Favorites', 'All', ...ordered];
 }
 
 function renderGenres() {
@@ -261,7 +343,7 @@ function filterGenre(g) {
 function filteredStations() {
   if (activeGenre === 'Favorites') return stations.filter(s => s.fav);
   if (activeGenre === 'All') return stations;
-  return stations.filter(s => s.genre === activeGenre);
+  return stations.filter(s => normalizeGenre(s.genre) === activeGenre);
 }
 
 function renderStations() {
@@ -276,7 +358,7 @@ function renderStations() {
   list.innerHTML = filtered.map(s => {
     const realIdx = stations.indexOf(s);
     const isActive = realIdx === currentIdx;
-    const playing = isActive && !audio.paused;
+    const playing = isActive && isStationPlaying(s);
     const favCls = s.fav ? ' on' : '';
     return `<div class="station${isActive ? ' active' : ''}" onclick="playStation(${realIdx})" ondblclick="showEditModal(${realIdx})">
       <div class="dot${playing ? ' pulse' : ''}"></div>
@@ -284,7 +366,7 @@ function renderStations() {
         <div class="name">${esc(s.name)}</div>
         <div class="desc">${esc(s.desc || s.genre || '')}</div>
       </div>
-      <div class="genre-tag">${esc(s.genre || '')}</div>
+      <div class="genre-tag">${esc(normalizeGenre(s.genre))}</div>
       <button class="fav-btn${favCls}" onclick="event.stopPropagation();toggleFav(${realIdx})" title="Favorite">\u2605</button>
     </div>`;
   }).join('');
@@ -301,8 +383,22 @@ function toggleFav(idx) {
 // ── Playback ──────────────────────────────────────────────────────
 function playStation(idx) {
   if (idx < 0 || idx >= stations.length) return;
-  if (idx === currentIdx && !audio.paused) { audio.pause(); updateUI(); return; }
   currentIdx = idx;
+  if (hasNativeRadioBridge()) {
+    try {
+      applyNativeRadioState(AndroidInterface.playNativeRadioStream(
+        stations[idx].url,
+        stations[idx].name || '',
+        normalizeGenre(stations[idx].genre)
+      ));
+    } catch (e) {
+      console.warn('Native play failed:', e);
+      nativePlaybackState.error = e && e.message ? e.message : String(e);
+    }
+    updateUI();
+    return;
+  }
+  if (idx === currentIdx && !audio.paused) { audio.pause(); updateUI(); return; }
   audio.src = stations[idx].url;
   audio.load();
   audio.play().catch(e => console.warn('Play failed:', e));
@@ -311,6 +407,19 @@ function playStation(idx) {
 
 function togglePlay() {
   if (currentIdx < 0) { if (stations.length) playStation(0); return; }
+  if (hasNativeRadioBridge()) {
+    try {
+      if (nativePlaybackState.playing || nativePlaybackState.preparing || nativePlaybackState.buffering) {
+        applyNativeRadioState(AndroidInterface.pauseNativeRadioStream());
+      } else {
+        applyNativeRadioState(AndroidInterface.resumeNativeRadioStream());
+      }
+    } catch (e) {
+      console.warn('Native toggle failed:', e);
+    }
+    updateUI();
+    return;
+  }
   if (audio.paused) {
     if (!audio.src || audio.src === location.href) { audio.src = stations[currentIdx].url; audio.load(); }
     audio.play().catch(e => console.warn('Play failed:', e));
@@ -339,23 +448,85 @@ function setVolume(v) {
   document.getElementById('volPct').textContent = v + '%';
 }
 
+function syncPlaybackUiFromExternalState() {
+  try {
+    if (typeof AndroidInterface === 'undefined' || !AndroidInterface.getRadioPlaybackState) return;
+    const raw = AndroidInterface.getRadioPlaybackState();
+    if (!raw) return;
+    const state = JSON.parse(raw);
+    externalPlaybackState = {
+      playing: !!state.playing,
+      stationName: state.stationName || '',
+      genre: state.genre || '',
+      updatedAt: state.updatedAt || 0
+    };
+    if (externalPlaybackState.stationName) {
+      const matchedIdx = stations.findIndex(s => s.name === externalPlaybackState.stationName);
+      if (matchedIdx >= 0) currentIdx = matchedIdx;
+    } else if (audio.paused) {
+      currentIdx = currentIdx >= 0 ? currentIdx : -1;
+    }
+  } catch (e) {
+    console.warn('getRadioPlaybackState failed:', e);
+  }
+}
+
+function isExternallyPlayingStation(station) {
+  return !!(
+    station &&
+    externalPlaybackState &&
+    externalPlaybackState.playing &&
+    externalPlaybackState.stationName === station.name
+  );
+}
+
+function isStationPlaying(station) {
+  if (!station) return false;
+  if (hasNativeRadioBridge()) {
+    return !!(
+      station.name === nativePlaybackState.stationName &&
+      (nativePlaybackState.playing || nativePlaybackState.preparing || nativePlaybackState.buffering)
+    );
+  }
+  return !audio.paused || isExternallyPlayingStation(station);
+}
+
+function reportPlaybackState() {
+  if (hasNativeRadioBridge()) return;
+  try {
+    if (typeof AndroidInterface === 'undefined' || !AndroidInterface.saveRadioPlaybackState) return;
+    const station = currentIdx >= 0 ? stations[currentIdx] : null;
+    const playing = !!(station && isStationPlaying(station));
+    AndroidInterface.saveRadioPlaybackState(
+      playing ? (station.name || '') : '',
+      playing ? (station.genre || '') : '',
+      playing
+    );
+  } catch (e) {
+    console.warn('saveRadioPlaybackState failed:', e);
+  }
+}
+
 function updateUI() {
-  const playing = currentIdx >= 0 && !audio.paused;
+  const station = currentIdx >= 0 ? stations[currentIdx] : null;
+  const playing = currentIdx >= 0 && isStationPlaying(station);
   const btn = document.getElementById('btnPlay');
   btn.innerHTML = playing ? '&#9646;&#9646;' : '&#9654;';
   btn.classList.toggle('playing', playing);
   const now = document.getElementById('nowPlaying');
   if (currentIdx >= 0) {
-    const s = stations[currentIdx];
+    const s = station;
     now.textContent = playing ? '\u25B6 ' + s.name : '\u23F8 ' + s.name;
   } else { now.textContent = 'Select a station'; }
   renderStations();
+  reportPlaybackState();
 }
 
 audio.addEventListener('playing', updateUI);
 audio.addEventListener('pause', updateUI);
-audio.addEventListener('ended', () => nextStation());
+audio.addEventListener('ended', () => { reportPlaybackState(); nextStation(); });
 audio.addEventListener('error', () => {
+  reportPlaybackState();
   document.getElementById('nowPlaying').textContent = '\u26A0 Stream error \u2014 trying next...';
   setTimeout(() => nextStation(), 2000);
 });
@@ -404,8 +575,15 @@ function saveStation() {
 function deleteStation() {
   if (editIdx < 0) return;
   if (!confirm('Delete "' + stations[editIdx].name + '"?')) return;
-  if (currentIdx === editIdx) { audio.pause(); audio.src = ''; currentIdx = -1; }
-  else if (currentIdx > editIdx) currentIdx--;
+  if (currentIdx === editIdx) {
+    if (hasNativeRadioBridge()) {
+      try { applyNativeRadioState(AndroidInterface.stopNativeRadioStream()); } catch (e) { console.warn('Native stop failed:', e); }
+    } else {
+      audio.pause();
+      audio.src = '';
+    }
+    currentIdx = -1;
+  } else if (currentIdx > editIdx) currentIdx--;
   stations.splice(editIdx, 1);
   save(); renderGenres(); renderStations(); updateUI(); hideModal();
 }
@@ -434,6 +612,43 @@ window.tapRadioGetStations = () => JSON.stringify(stations);
 window.tapRadioSetStations = (json) => {
   try { stations = JSON.parse(json); save(); renderGenres(); renderStations(); }
   catch(e) { console.error('tapRadioSetStations error:', e); }
+};
+
+window.addEventListener('focus', () => { syncPlaybackUiFromExternalState(); syncNativeRadioState(); updateUI(); });
+window.addEventListener('pageshow', () => { syncPlaybackUiFromExternalState(); syncNativeRadioState(); updateUI(); });
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    syncPlaybackUiFromExternalState();
+    syncNativeRadioState();
+    updateUI();
+  }
+});
+window.tapRadioSyncPlaybackUi = () => {
+  syncPlaybackUiFromExternalState();
+  syncNativeRadioState();
+  updateUI();
+};
+window.tapRadioNativeResumePlayback = () => {
+  if (hasNativeRadioBridge()) {
+    applyNativeRadioState(AndroidInterface.resumeNativeRadioStream());
+    updateUI();
+  } else {
+    togglePlay();
+  }
+};
+window.tapRadioNativePausePlayback = () => {
+  if (hasNativeRadioBridge()) {
+    applyNativeRadioState(AndroidInterface.pauseNativeRadioStream());
+    updateUI();
+  } else {
+    togglePlay();
+  }
+};
+window.tapRadioNativeStopPlayback = () => {
+  if (hasNativeRadioBridge()) {
+    applyNativeRadioState(AndroidInterface.stopNativeRadioStream());
+    updateUI();
+  }
 };
 
 init();

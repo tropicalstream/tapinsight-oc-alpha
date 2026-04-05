@@ -3,19 +3,24 @@ package com.TapLinkX3.app
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
+import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.PorterDuff
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
+import android.media.audiofx.Visualizer
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.Parcel
+import android.os.PowerManager
 import android.os.SystemClock
 import android.text.Editable
 import android.text.TextUtils
@@ -46,6 +51,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import kotlin.math.roundToInt
+import kotlin.math.pow
 import org.json.JSONObject
 
 @SuppressLint("ClickableViewAccessibility")
@@ -66,6 +72,19 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 
     private val PREFS_NAME = "TapLinkPrefs"
     private val KEY_WINDOWS_STATE = "saved_windows_state"
+    private val KEY_BROWSER_SHOW_SYSTEM_INFO = "browser_show_system_info"
+    private val sharedConfigPrefs =
+            context.getSharedPreferences("visionclaw_prefs", Context.MODE_PRIVATE)
+    private val sharedConfigListener =
+            SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+                if (key == KEY_BROWSER_SHOW_SYSTEM_INFO) {
+                    post {
+                        updateSystemInfoBarVisibility()
+                        requestLayout()
+                        invalidate()
+                    }
+                }
+            }
 
     private data class BrowserWindow(
             val id: String = java.util.UUID.randomUUID().toString(),
@@ -93,7 +112,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
             val timestamp: Long
     )
 
-    private val windows = mutableListOf<BrowserWindow>()
+    private val windows = java.util.concurrent.CopyOnWriteArrayList<BrowserWindow>()
     private var activeWindowId: String? = null
 
     interface WindowCallback {
@@ -144,8 +163,25 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     private var lastMediaPlayingAt = 0L
     private var lastMediaInteractionTime = 0L
     private val mediaScrollFreezeMs = 1500L
-    private val mediaStateByWindowId = mutableMapOf<String, Boolean>()
-    private val mediaLastPlayedAtByWindowId = mutableMapOf<String, Long>()
+    private val mediaStateByWindowId = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    private val mediaLastPlayedAtByWindowId = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val youtubeMediaTeardownScript =
+            """
+            (function() {
+                try {
+                    document.querySelectorAll('video, audio').forEach(function(el) {
+                        try {
+                            el.pause();
+                            el.autoplay = false;
+                            el.muted = true;
+                            el.currentTime = 0;
+                            el.removeAttribute('src');
+                            el.load();
+                        } catch (inner) {}
+                    });
+                } catch (outer) {}
+            })();
+            """.trimIndent()
 
     // Idle detection for power saving
     private var lastUserInteractionTime = 0L
@@ -267,7 +303,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
             field = value
             updateRefreshRate()
         }
-    private var isHoveringAnchorToggle = false
+    private var isHoveringTtsToggle = false
 
     private val bitmapLock = Any()
     private var settingsMenu: View? = null
@@ -281,8 +317,8 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         fun onMaskTogglePressed()
     }
 
-    interface AnchorToggleListener {
-        fun onAnchorTogglePressed()
+    interface TtsToggleListener {
+        fun onTtsTogglePressed()
     }
 
     interface FullscreenListener {
@@ -411,6 +447,28 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         }
     }
 
+    fun pauseYouTubeMediaAcrossAllWindows(resetTracking: Boolean = true) {
+        windows.forEach { win ->
+            val url = win.webView.url.orEmpty()
+            if (!url.contains("youtube.com", ignoreCase = true) &&
+                            !url.contains("youtu.be", ignoreCase = true)
+            ) {
+                return@forEach
+            }
+
+            try {
+                win.webView.stopLoading()
+            } catch (_: Exception) {}
+
+            win.webView.post { win.webView.evaluateJavascript(youtubeMediaTeardownScript, null) }
+            mediaStateByWindowId[win.id] = false
+        }
+
+        if (resetTracking) {
+            updateMediaState(mediaStateByWindowId.values.any { it })
+        }
+    }
+
     private val fullScreenOverlayContainer =
             FrameLayout(context).apply {
                 clipChildren = true
@@ -510,6 +568,41 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         // Update scroll bar thumb positions
         updateScrollBarThumbs(xProgress, yProgress)
         applyScrollbarTransform()
+    }
+
+    fun recenterViewportForDashboard(targetWebView: WebView? = webView) {
+        context.getSharedPreferences("TapLinkPrefs", Context.MODE_PRIVATE)
+                .edit()
+                .putInt("uiTransXProgress", 50)
+                .putInt("uiTransYProgress", 50)
+                .apply()
+        updateUiTranslation()
+
+        targetWebView?.post {
+            try {
+                targetWebView.scrollTo(0, 0)
+            } catch (_: Exception) {}
+            try {
+                targetWebView.evaluateJavascript(
+                        """
+                        (function() {
+                            try {
+                                window.scrollTo(0, 0);
+                                if (document.documentElement) {
+                                    document.documentElement.scrollLeft = 0;
+                                    document.documentElement.scrollTop = 0;
+                                }
+                                if (document.body) {
+                                    document.body.scrollLeft = 0;
+                                    document.body.scrollTop = 0;
+                                }
+                            } catch (e) {}
+                        })();
+                        """.trimIndent(),
+                        null
+                )
+            } catch (_: Exception) {}
+        }
     }
 
     private fun isWebViewScrollEnabled(): Boolean {
@@ -774,9 +867,34 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                     p.leftMargin = baseLeftMargin
                     p.rightMargin = 0
                     p.bottomMargin = baseBottomMargin
+                    p.gravity = Gravity.TOP or Gravity.START
                     webViewsContainer.layoutParams = p
                     webViewsContainer.requestLayout()
                     webViewsContainer.invalidate()
+                    // Reset horizontal scroll to prevent right-offset
+                    if (webView.scrollX > 0) webView.scrollTo(0, webView.scrollY)
+                }
+            }
+            return
+        }
+
+        // Hide scrollbars entirely on AR nav map pages (full-viewport 3D map)
+        val currentUrl = webView.url ?: ""
+        if (currentUrl.contains("ar_nav.html")) {
+            horizontalScrollBar.visibility = View.GONE
+            verticalScrollBar.visibility = View.GONE
+            (webViewsContainer.layoutParams as? FrameLayout.LayoutParams)?.let { p ->
+                val targetWidth = if (isScrollModeActive) containerWidth else containerWidth - baseLeftMargin
+                val targetHeight = (480 - baseBottomMargin - keyboardHeight).coerceAtLeast(0)
+                if (p.width != targetWidth || p.height != targetHeight || p.rightMargin != 0) {
+                    p.width = targetWidth
+                    p.height = targetHeight
+                    p.leftMargin = baseLeftMargin
+                    p.rightMargin = 0
+                    p.bottomMargin = baseBottomMargin
+                    p.gravity = Gravity.TOP or Gravity.START
+                    webViewsContainer.layoutParams = p
+                    webViewsContainer.requestLayout()
                 }
             }
             return
@@ -865,16 +983,18 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                 p.leftMargin = targetLeftMargin
                 p.rightMargin = targetRightMargin
                 p.bottomMargin = targetBottomMargin
+                p.gravity = Gravity.TOP or Gravity.START
 
-                // DebugLog.d("ScrollDebug", "Applying Layout: Mode=${if(isScrollModeActive)"Scroll"
-                // else
-                // "Normal"}, [${p.width} x ${p.height}], Margins: L=${p.leftMargin},
-                // R=${p.rightMargin}, B=${p.bottomMargin}")
                 webViewsContainer.layoutParams = p
                 // Force layout update on WebView itself to ensure it resizes
                 webView.requestLayout()
                 webViewsContainer.requestLayout()
                 webViewsContainer.invalidate()
+
+                // Reset horizontal scroll to prevent right-offset after layout change
+                if (!showHorz && webView.scrollX > 0) {
+                    webView.scrollTo(0, webView.scrollY)
+                }
             }
         }
 
@@ -1182,7 +1302,21 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     }
 
     private var isScreenMasked = false
+    private var isHostPaused = false
     private var isHoveringMaskToggle = false
+    // WakeLock keeps CPU awake while screen is masked (projector off) so audio doesn't skip.
+    // Without this, Android Doze will periodically sleep the CPU causing ~10s audio stutters.
+    private val maskWakeLock: PowerManager.WakeLock =
+        (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TapInsight:MaskAudioPlayback")
+    private val pausedMediaWakeLock: PowerManager.WakeLock =
+        (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TapInsight:PausedMediaPlayback")
+    private val mediaWifiLock: WifiManager.WifiLock? =
+        (context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager)?.run {
+            @Suppress("DEPRECATION")
+            createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "TapInsight:StreamingAudio")
+        }
     private var maskOverlay: FrameLayout =
             FrameLayout(context).apply {
                 setBackgroundColor(Color.BLACK)
@@ -1195,8 +1329,26 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                 // Consume all touch events to prevent propagation to navbar/webview behind
                 // and route taps into mask overlay controls.
                 setOnTouchListener { _, event ->
-                    if (event.actionMasked == MotionEvent.ACTION_UP) {
-                        dispatchMaskOverlayTouch(event.rawX, event.rawY)
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> {
+                            maskOverlayTouchDownX = event.rawX
+                            maskOverlayTouchDownY = event.rawY
+                            maskOverlayTouchDownTime = SystemClock.uptimeMillis()
+                        }
+                        MotionEvent.ACTION_UP -> {
+                            val dx = event.rawX - maskOverlayTouchDownX
+                            val dy = event.rawY - maskOverlayTouchDownY
+                            val distSq = dx * dx + dy * dy
+                            val duration = SystemClock.uptimeMillis() - maskOverlayTouchDownTime
+                            val isTap = distSq <= (maskOverlayTapSlopPx * maskOverlayTapSlopPx) && duration <= maskOverlayTapMaxDurationMs
+                            if (isTap) {
+                                dispatchMaskOverlayTouch(event.rawX, event.rawY)
+                            }
+                        }
+                        MotionEvent.ACTION_CANCEL -> {
+                            // Reset touch state when parent cancels the touch sequence
+                            maskOverlayTouchDownTime = 0L
+                        }
                     }
                     true
                 }
@@ -1211,6 +1363,40 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     private lateinit var btnMaskNext: FontIconView // 10s forward
     private lateinit var btnMaskNextTrack: FontIconView // Skip to next song
     private lateinit var btnMaskUnmask: ImageButton
+    private lateinit var maskNowPlayingText: TextView
+    private var lastMaskedDomTitle: String? = null
+    private var lastMaskedDomTitleUrl: String? = null
+    private var lastMaskedDomTitleAt: Long = 0L
+    private val maskedDomTitleFreshMs = 15000L
+    private val maskNowPlayingPeriodicRefresh: Runnable = object : Runnable {
+        override fun run() {
+            if (!isScreenMasked) return
+            refreshMaskedNowPlayingFromJs()
+            refreshMaskedNowPlaying()
+            postDelayed(this, 5000L)
+        }
+    }
+    private lateinit var btnVisualizerToggle: FontIconView
+    private lateinit var maskVisualizerView: AudioVisualizerView
+    private var isVisualizerVisible = false
+    private var audioVisualizer: Visualizer? = null
+    // Double-buffer for thread-safe FFT data: audio thread writes to back buffer,
+    // UI thread reads from front buffer. References swapped atomically.
+    @Volatile private var fftFrontBuffer = FloatArray(32)
+    private var fftBackBuffer = FloatArray(32)
+    private val fftMagnitudes: FloatArray get() = fftFrontBuffer  // read alias for UI thread
+    private var lastVisualizerToggleTime = 0L
+    private var lastVisualizerThemeTapTime = 0L
+    private var maskOverlayTouchDownX = 0f
+    private var maskOverlayTouchDownY = 0f
+    private var maskOverlayTouchDownTime = 0L
+    private val maskOverlayTapSlopPx = 24f
+    // Lightweight dedup for mask overlay touch dispatch — prevents the same physical tap
+    // from being processed twice when multiple code paths fire within the same input cycle.
+    // Kept very short (50ms) to avoid blocking intentional rapid taps (e.g. visualizer theme cycling).
+    private var lastMaskOverlayDispatchTime = 0L
+    private val MASK_OVERLAY_DISPATCH_DEBOUNCE_MS = 400L
+    private val maskOverlayTapMaxDurationMs = 350L
 
     // Fullscreen Mode UI elements
     private lateinit var fullScreenControlsContainer: FrameLayout
@@ -1224,7 +1410,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     private lateinit var btnFsNextTrack: FontIconView
     private lateinit var btnFsExit: FontIconView
 
-    var anchorToggleListener: AnchorToggleListener? = null
+    var ttsToggleListener: TtsToggleListener? = null
 
     // Add properties to track translations
     private var _translationX = 0f
@@ -1625,6 +1811,56 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         return newWebView
     }
 
+    fun resetToSingleWindow(loadDefaultUrl: Boolean = false): WebView {
+        windows.toList().forEach { win ->
+            try {
+                win.webView.stopLoading()
+            } catch (_: Exception) {}
+            try {
+                webViewsContainer.removeView(win.webView)
+            } catch (_: Exception) {}
+            try {
+                win.webView.destroy()
+            } catch (_: Exception) {}
+            win.thumbnail?.recycle()
+        }
+
+        windows.clear()
+        mediaStateByWindowId.clear()
+        mediaLastPlayedAtByWindowId.clear()
+        activeWindowId = null
+        isMediaPlaying = false
+        hideMediaControls()
+        webViewsContainer.removeAllViews()
+
+        val freshWebView = InternalWebView(context)
+        configureWebView(freshWebView)
+        applyBrowsingModeToWebView(freshWebView, isDesktopMode)
+        if (loadDefaultUrl) {
+            freshWebView.loadUrl(Constants.DEFAULT_URL)
+        }
+
+        val freshWindow = BrowserWindow(webView = freshWebView, title = "New Tab")
+        freshWebView.visibility = View.VISIBLE
+        webViewsContainer.addView(
+                freshWebView,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+        )
+        windowCallback?.onWindowCreated(freshWebView)
+
+        windows.add(freshWindow)
+        activeWindowId = freshWindow.id
+        webView = freshWebView
+        updateScrollBarsVisibility()
+        windowCallback?.onWindowSwitched(freshWebView)
+        freshWebView.post { injectPageObservers(freshWebView) }
+        startRefreshing()
+        hideWindowsOverview()
+        saveAllWindowsState()
+        return freshWebView
+    }
+
     fun switchToWindow(id: String) {
         val targetWindow = windows.find { it.id == id } ?: return
 
@@ -1634,14 +1870,19 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
             return
         }
 
-        // Hide current active webview
-        webView.visibility = View.INVISIBLE
+        // Pause the old WebView to free CPU/network resources while inactive
+        val oldWebView = webView
+        oldWebView.visibility = View.INVISIBLE
+        oldWebView.onPause()
+        oldWebView.pauseTimers()
 
         // Switch active window
         activeWindowId = id
         webView = targetWindow.webView
 
-        // Show new active webview and bring to front within container to ensure z-ordering
+        // Resume the new WebView and bring to front
+        webView.resumeTimers()
+        webView.onResume()
         webView.visibility = View.VISIBLE
         webView.bringToFront()
 
@@ -1699,7 +1940,11 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         }
     }
 
-    fun saveAllWindowsState() {
+    fun saveWindowMetadataState(forceSync: Boolean = false) {
+        saveAllWindowsState(forceSync = forceSync, includeWebViewState = false)
+    }
+
+    fun saveAllWindowsState(forceSync: Boolean = false, includeWebViewState: Boolean = true) {
         try {
             val root = org.json.JSONObject()
             root.put("activeId", activeWindowId)
@@ -1719,29 +1964,31 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                 winObj.put("title", win.title)
                 winObj.put("url", win.webView.url ?: "")
 
-                // Save full WebView state (history, etc) - with size limit
-                try {
-                    val state = Bundle()
-                    win.webView.saveState(state)
-                    val parcel = Parcel.obtain()
-                    state.writeToParcel(parcel, 0)
-                    val bytes = parcel.marshall()
-                    parcel.recycle()
+                if (includeWebViewState) {
+                    // Save full WebView state (history, etc) - with size limit
+                    try {
+                        val state = Bundle()
+                        win.webView.saveState(state)
+                        val parcel = Parcel.obtain()
+                        state.writeToParcel(parcel, 0)
+                        val bytes = parcel.marshall()
+                        parcel.recycle()
 
-                    // Only save state if under size limit
-                    if (bytes.size < maxStateSize) {
-                        val stateString = Base64.encodeToString(bytes, Base64.DEFAULT)
-                        winObj.put("state", stateString)
-                    } else {
-                        Log.w(
-                                "Persistence",
-                                "Window ${win.id} state too large (${bytes.size} bytes), skipping state save"
-                        )
-                        // Don't save state, just URL - will reload on restore
+                        // Only save state if under size limit
+                        if (bytes.size < maxStateSize) {
+                            val stateString = Base64.encodeToString(bytes, Base64.DEFAULT)
+                            winObj.put("state", stateString)
+                        } else {
+                            Log.w(
+                                    "Persistence",
+                                    "Window ${win.id} state too large (${bytes.size} bytes), skipping state save"
+                            )
+                            // Don't save state, just URL - will reload on restore
+                        }
+                    } catch (e: Exception) {
+                        Log.e("Persistence", "Error saving state for window ${win.id}", e)
+                        // Continue without state for this window
                     }
-                } catch (e: Exception) {
-                    Log.e("Persistence", "Error saving state for window ${win.id}", e)
-                    // Continue without state for this window
                 }
 
                 windowsArray.put(winObj)
@@ -1762,14 +2009,18 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                 return
             }
 
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val editor = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit()
                     .putString(KEY_WINDOWS_STATE, jsonString)
-                    .apply()
+            if (forceSync) {
+                editor.commit()
+            } else {
+                editor.apply()
+            }
 
             DebugLog.d(
                     "Persistence",
-                    "Saved ${windows.size} windows with state (${jsonString.length} chars)"
+                    "Saved ${windows.size} windows with${if (includeWebViewState) "" else "out"} bundles (${jsonString.length} chars)"
             )
         } catch (e: Exception) {
             Log.e("Persistence", "Error saving window state", e)
@@ -1921,6 +2172,8 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                             }
                             return true
                         }
+                        // Intercept media file links → open in TapInsight media player
+                        if (view != null && interceptMediaUrl(view, url)) return true
                         return false
                     }
 
@@ -1950,27 +2203,16 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                             }
                             return true
                         }
+                        if (url != null && view != null && interceptMediaUrl(view, url)) return true
                         return false
                     }
 
                     override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
                         super.onPageFinished(view, url)
                         try {
-                            // val mediaInterfaceClass =
-                            //        Class.forName(
-                            //                "com.TapLinkX3.app.DualWebViewGroup\$MediaInterface"
-                            //        )
-                            // Actually we are inside DualWebViewGroup, so can call method directly?
-                            // Yes, injectMediaListeners() is a private method of DualWebViewGroup.
-                            // But WebViewClient is an anonymous inner class.
-                            // So we need to call DualWebViewGroup.this.injectMediaListeners()
-                            // But in Kotlin inner class, we can just call it if it's visible.
-                            // injectMediaListeners is private in DualWebViewGroup.
-                            // Kotlin anonymous object inside a method (configureWebView)
-                            // configureWebView is a method of DualWebViewGroup.
-                            // So yes, we can call injectMediaListeners() directly.
                             view?.let { injectPageObservers(it) }
                             updateScrollBarsVisibility()
+
                         } catch (e: Exception) {
                             android.util.Log.e("TapLink", "Error in onPageFinished", e)
                         }
@@ -2317,6 +2559,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                             .apply {
                                 leftMargin = toggleBarWidthPx // Position after toggle bar
                                 bottomMargin = navBarHeightPx // Account for nav bar
+                                gravity = Gravity.TOP or Gravity.START
                             }
             )
             addView(leftToggleBar)
@@ -2366,6 +2609,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                         MeasureSpec.makeMeasureSpec(640, MeasureSpec.AT_MOST),
                         MeasureSpec.makeMeasureSpec(24, MeasureSpec.EXACTLY)
                 )
+                updateSystemInfoBarVisibility()
                 leftSystemInfoView.requestLayout()
                 leftSystemInfoView.invalidate()
             }
@@ -2790,19 +3034,24 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         val now = System.currentTimeMillis()
         val isIdle = (now - lastUserInteractionTime) > idleThresholdMs
 
-        // Logic (prioritized):
+        // With BinocularSbsLayout handling SBS rendering directly (no PixelCopy),
+        // the refresh loop only drives scrollbar checks and cursor blink.
+        // Lower rates save CPU/GPU for audio decoding and reduce thermal throttling.
+        //
         // 1. Screen masked: 10fps (100ms) - minimal updates
-        // 2. Idle (no user interaction for 5s) and not playing media: 10fps (100ms)
-        // 3. Media playing: 60fps (16ms) - smooth video playback
-        // 4. Anchored + Normal browsing: 60fps (16ms) - needs smooth head tracking
-        // 5. Non-anchored without media: 30fps (33ms) - balanced for browsing
+        // 2. Scrolling: 60fps (16ms) - smooth scroll bar tracking
+        // 3. Idle and not playing media: 10fps (100ms)
+        // 4. Media playing (audio/video): 4fps (250ms) — scrollbars rarely change,
+        //    and freeing the main-thread + GPU eliminates audio-thread starvation
+        // 5. Anchored browsing: 30fps (33ms) - responsive scroll bars
+        // 6. Default: 30fps (33ms)
         refreshInterval =
                 when {
                     isScreenMasked -> maskedRefreshIntervalMs
                     isInScrollMode -> 16L
                     isIdle && !isMediaPlaying -> idleRefreshIntervalMs
-                    isMediaPlaying -> 16L
-                    isAnchored && !isFullscreen -> 16L
+                    isMediaPlaying -> 250L
+                    isAnchored && !isFullscreen -> 33L
                     else -> 33L
                 }
     }
@@ -2899,18 +3148,34 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     }
 
     fun maskScreen() {
+        if (isScreenMasked) return  // Idempotent: prevent duplicate handler accumulation
         isScreenMasked = true
         maskOverlay.visibility = View.VISIBLE
         maskOverlay.bringToFront()
         // Hide both cursor views
         leftToggleBar.findViewById<FontIconView>(R.id.btnMask)?.setText(R.string.fa_eye_slash)
         keepScreenOn = true
+        updatePlaybackWakeLocks()
+        refreshMaskedNowPlaying()
+        refreshMaskedNowPlayingFromJs()
+        // Start periodic now-playing refresh (every 5s) — remove first to guarantee single handler
+        removeCallbacks(maskNowPlayingPeriodicRefresh)
+        postDelayed(maskNowPlayingPeriodicRefresh, 5000L)
         updateRefreshRate()
     }
 
     fun unmaskScreen() {
         isScreenMasked = false
+        updatePlaybackWakeLocks()
+        removeCallbacks(maskNowPlayingPeriodicRefresh)
+        lastMaskedDomTitle = null
+        lastMaskedDomTitleUrl = null
+        lastMaskedDomTitleAt = 0L
         maskOverlay.visibility = View.GONE
+        if (::maskNowPlayingText.isInitialized) {
+            maskNowPlayingText.visibility = View.GONE
+        }
+        if (isVisualizerVisible) hideVisualizer()
         // Let MainActivity handle cursor visibility restoration - cursors will be shown
         // if they were visible before masking through updateCursorPosition call
         leftToggleBar.findViewById<FontIconView>(R.id.btnMask)?.setText(R.string.fa_eye)
@@ -2920,9 +3185,21 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 
     fun isScreenMasked() = isScreenMasked
 
+    fun setHostPaused(paused: Boolean) {
+        if (isHostPaused == paused) return
+        isHostPaused = paused
+        updatePlaybackWakeLocks()
+    }
+
     fun isFullScreenOverlayVisible() = fullScreenOverlayContainer.visibility == View.VISIBLE
 
     fun dispatchMaskOverlayTouch(screenX: Float, screenY: Float) {
+        // Global debounce: prevent the same physical tap from triggering this method
+        // multiple times via different code paths (maskOverlay listener + MainActivity handlers)
+        val now = SystemClock.uptimeMillis()
+        if (now - lastMaskOverlayDispatchTime < MASK_OVERLAY_DISPATCH_DEBOUNCE_MS) return
+        lastMaskOverlayDispatchTime = now
+
         val location = IntArray(2)
         maskOverlay.getLocationOnScreen(location)
         val scale = uiScale
@@ -2947,6 +3224,44 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
             // DebugLog.d("MediaControls", "Unmask button pressed")
             unmaskScreen()
             return
+        }
+
+        // Check visualizer toggle button
+        if (::btnVisualizerToggle.isInitialized && btnVisualizerToggle.visibility == View.VISIBLE) {
+            val vizBtnLoc = IntArray(2)
+            btnVisualizerToggle.getLocationOnScreen(vizBtnLoc)
+            val vizW = btnVisualizerToggle.width * scale
+            val vizH = btnVisualizerToggle.height * scale
+            // Expand hit area for small button
+            val pad = 12f * scale
+            if (screenX >= vizBtnLoc[0] - pad &&
+                screenX <= vizBtnLoc[0] + vizW + pad &&
+                screenY >= vizBtnLoc[1] - pad &&
+                screenY <= vizBtnLoc[1] + vizH + pad
+            ) {
+                btnVisualizerToggle.performClick()
+                return
+            }
+        }
+
+        // Tap on the visualizer itself → cycle themes (debounced 400ms)
+        if (::maskVisualizerView.isInitialized && maskVisualizerView.visibility == View.VISIBLE) {
+            val vizLoc = IntArray(2)
+            maskVisualizerView.getLocationOnScreen(vizLoc)
+            val vizW = maskVisualizerView.width * scale
+            val vizH = maskVisualizerView.height * scale
+            if (screenX >= vizLoc[0] &&
+                screenX <= vizLoc[0] + vizW &&
+                screenY >= vizLoc[1] &&
+                screenY <= vizLoc[1] + vizH
+            ) {
+                val now = SystemClock.uptimeMillis()
+                if (now - lastVisualizerThemeTapTime < 500) return  // debounce theme taps (prevent multi-fire from touch+mouse)
+                lastVisualizerThemeTapTime = now
+                maskVisualizerView.cycleThemeOrWrap()
+                updateVisualizerButtonColor()
+                return
+            }
         }
 
         // Check media control buttons
@@ -3409,72 +3724,33 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         if (currentTime - lastCaptureTime < MIN_CAPTURE_INTERVAL) {
             return
         }
+        lastCaptureTime = currentTime
 
-        synchronized(bitmapLock) {
-            try {
-                val halfWidth = width / 2
-                val currentBitmap = bitmap
+        try {
+            // Check scrollbar visibility periodically (once per second)
+            // Skip if in fullscreen mode to save power
+            val isFullScreen = fullScreenOverlayContainer.visibility == View.VISIBLE
 
-                if (currentBitmap == null ||
-                                currentBitmap.isRecycled ||
-                                currentBitmap.width != halfWidth ||
-                                currentBitmap.height != height
-                ) {
-                    setupBitmap(halfWidth, height)
+            if (!isFullScreen && currentTime - lastScrollBarCheckTime > 1000) {
+                if (!shouldFreezeScrollBars()) {
+                    updateScrollBarsVisibility()
                 }
-
-                // Get the current bitmap after potential setup
-                val bitmapToUse = bitmap ?: return
-
-                // Check scrollbar visibility periodically (once per second)
-                // Skip if in fullscreen mode to save power
-                val isFullScreen = fullScreenOverlayContainer.visibility == View.VISIBLE
-
-                if (!isFullScreen && currentTime - lastScrollBarCheckTime > 1000) {
-                    if (!shouldFreezeScrollBars()) {
-                        updateScrollBarsVisibility()
-                    }
-                    lastScrollBarCheckTime = currentTime
-                }
-
-                // Force cursor refresh if editing - skip in fullscreen
-                if (!isFullScreen && _isUrlEditing && urlEditText.isFocused) {
-                    urlEditText.invalidate()
-                }
-
-                val captureRect = android.graphics.Rect(0, 0, halfWidth, height)
-                val window = (context as Activity).window
-
-                PixelCopy.request(
-                        window,
-                        captureRect,
-                        bitmapToUse,
-                        { copyResult ->
-                            // Log PixelCopy result for debugging
-                            if (copyResult != PixelCopy.SUCCESS) {
-                                Log.w("MirrorDebug", "PixelCopy failed with result: $copyResult")
-                            }
-
-                            if (copyResult == PixelCopy.SUCCESS && isRefreshing) {
-                                synchronized(bitmapLock) {
-                                    if (!bitmapToUse.isRecycled && bitmap === bitmapToUse) {
-                                        drawBitmapToSurface()
-                                        lastCaptureTime = System.currentTimeMillis()
-                                    } else {
-                                        Log.w(
-                                                "MirrorDebug",
-                                                "Bitmap state issue - recycled: ${bitmapToUse.isRecycled}, same: ${bitmap === bitmapToUse}"
-                                        )
-                                    }
-                                }
-                            }
-                        },
-                        refreshHandler
-                )
-            } catch (e: Exception) {
-                Log.e("MirrorDebug", "Error capturing content", e)
-                stopRefreshing()
+                lastScrollBarCheckTime = currentTime
             }
+
+            // Force cursor refresh if editing - skip in fullscreen
+            if (!isFullScreen && _isUrlEditing && urlEditText.isFocused) {
+                urlEditText.invalidate()
+            }
+
+            // NOTE: PixelCopy + drawBitmapToSurface() removed — BinocularSbsLayout now
+            // renders the SBS output directly from the view hierarchy, making the old
+            // capture-to-bitmap-then-draw pipeline dead code. Removing it frees ~60 GPU
+            // PixelCopy ops/sec and eliminates bitmapLock contention that was starving
+            // the audio decoder thread on the X3 Pro (manifesting as periodic stutters).
+        } catch (e: Exception) {
+            Log.e("MirrorDebug", "Error in refresh tick", e)
+            stopRefreshing()
         }
     }
 
@@ -3809,11 +4085,9 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
             }
         }
 
-        // Hide system info bar in scroll mode, show otherwise
-        if (isInScrollMode) {
-            leftSystemInfoView.visibility = View.GONE
-        } else {
-            leftSystemInfoView.visibility = View.VISIBLE
+        // Hide system info bar when disabled or while nav/scroll overlays are hidden.
+        updateSystemInfoBarVisibility()
+        if (leftSystemInfoView.visibility == View.VISIBLE) {
             // Calculate system info bar position
             val infoBarHeight = 24
             val infoBarY = eyeHeight - navBarHeight - infoBarHeight // Position above nav bar
@@ -3979,8 +4253,20 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         }
     }
 
+    private var sharedConfigListenerRegistered = false
+
     fun cleanupResources() {
+        if (maskWakeLock.isHeld) maskWakeLock.release()
+        if (pausedMediaWakeLock.isHeld) pausedMediaWakeLock.release()
+        try {
+            if (mediaWifiLock?.isHeld == true) mediaWifiLock.release()
+        } catch (_: Exception) {}
+        if (sharedConfigListenerRegistered) {
+            sharedConfigPrefs.unregisterOnSharedPreferenceChangeListener(sharedConfigListener)
+            sharedConfigListenerRegistered = false
+        }
         stopRefreshing()
+        releaseAudioCapture()
         synchronized(bitmapLock) {
             bitmap?.let { currentBitmap ->
                 if (!currentBitmap.isRecycled) {
@@ -4035,7 +4321,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     }
 
     fun showInfoBars() {
-        leftSystemInfoView.visibility = View.VISIBLE
+        updateSystemInfoBarVisibility()
     }
 
     fun hideInfoBars() {
@@ -4043,6 +4329,18 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     }
 
     private fun Int.dp(): Int = (this * resources.displayMetrics.density).roundToInt()
+
+    private fun isBrowserSystemInfoEnabled(): Boolean =
+            sharedConfigPrefs.getBoolean(KEY_BROWSER_SHOW_SYSTEM_INFO, true)
+
+    private fun updateSystemInfoBarVisibility() {
+        leftSystemInfoView.visibility =
+                if (!isBrowserSystemInfoEnabled() || isInScrollMode || isNavBarsHidden) {
+                    View.GONE
+                } else {
+                    View.VISIBLE
+                }
+    }
 
     // Add keyboard mirror handling
     fun setKeyboard(originalKeyboard: CustomKeyboardView) {
@@ -4910,7 +5208,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     }
 
     private fun handleLeftMenuAction(buttonId: Int) {
-        if (buttonId != R.id.btnAnchor) {
+        if (buttonId != R.id.btnTts) {
             keyboardListener?.onHideKeyboard()
         }
 
@@ -4949,9 +5247,9 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                 button?.let { showButtonClickFeedback(it) }
                 maskToggleListener?.onMaskTogglePressed()
             }
-            R.id.btnAnchor -> {
+            R.id.btnTts -> {
                 button?.let { showButtonClickFeedback(it) }
-                anchorToggleListener?.onAnchorTogglePressed()
+                ttsToggleListener?.onTtsTogglePressed()
             }
         }
     }
@@ -5031,7 +5329,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                         Triple(R.id.btnZoomOut, "ZoomOut") { isHoveringZoomOut = true },
                         Triple(R.id.btnZoomIn, "ZoomIn") { isHoveringZoomIn = true },
                         Triple(R.id.btnMask, "Mask") { isHoveringMaskToggle = true },
-                        Triple(R.id.btnAnchor, "Anchor") { isHoveringAnchorToggle = true }
+                        Triple(R.id.btnTts, "TTS") { isHoveringTtsToggle = true }
                 )
 
         for ((buttonId, _, setHoverFlag) in toggleBarButtons) {
@@ -5360,7 +5658,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         isHoveringZoomOut = false
 
         isHoveringMaskToggle = false
-        isHoveringAnchorToggle = false
+        isHoveringTtsToggle = false
         isHoveringWindowsToggle = false
 
         // Clear windows overview hover
@@ -5375,7 +5673,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                         R.id.btnZoomIn,
                         R.id.btnZoomOut,
                         R.id.btnMask,
-                        R.id.btnAnchor
+                        R.id.btnTts
                 )
                 .forEach { id -> leftToggleBar.findViewById<View>(id)?.isHovered = false }
 
@@ -5550,14 +5848,32 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         return leftToggleBar.visibility == View.VISIBLE
     }
 
-    fun isPointInToggleBar(screenX: Float, screenY: Float): Boolean {
+    private fun isPointInToggleBarButton(screenX: Float, screenY: Float): Boolean {
+        if (leftToggleBar.visibility != View.VISIBLE) return false
         val (localX, localY) = computeAnchoredCoordinates(screenX, screenY)
-        return isPointInView(localX, localY, leftToggleBar)
+        val buttonIds = listOf(
+            R.id.btnModeToggle,
+            R.id.btnYouTube,
+            R.id.btnBookmarks,
+            R.id.btnZoomOut,
+            R.id.btnZoomIn,
+            R.id.btnMask,
+            R.id.btnTts
+        )
+        if (buttonIds.any { id -> isPointInChild(localX, localY, leftToggleBar, leftToggleBar.findViewById(id)) }) {
+            return true
+        }
+        return windowsButton?.let { isPointInChild(localX, localY, leftToggleBar, it) } == true
+    }
+
+    fun isPointInToggleBar(screenX: Float, screenY: Float): Boolean {
+        return isPointInToggleBarButton(screenX, screenY)
     }
 
     fun isPointInNavBar(screenX: Float, screenY: Float): Boolean {
+        if (leftNavigationBar.visibility != View.VISIBLE) return false
         val (localX, localY) = computeAnchoredCoordinates(screenX, screenY)
-        return isPointInView(localX, localY, leftNavigationBar)
+        return navButtons.entries.any { isPointInChild(localX, localY, leftNavigationBar, it.value.left) }
     }
 
     private fun isPointInView(containerX: Float, containerY: Float, view: View?): Boolean {
@@ -5642,8 +5958,9 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     fun handleNavigationClick(screenX: Float, screenY: Float) {
         if (isInScrollMode) return
 
+        val (localX, localY) = computeAnchoredCoordinates(screenX, screenY)
+
         if (isSettingsVisible && settingsMenu != null) {
-            val (localX, localY) = computeAnchoredCoordinates(screenX, screenY)
             if (isPointInView(localX, localY, settingsMenu)) {
                 dispatchSettingsTouchEvent(screenX, screenY)
                 return
@@ -5659,19 +5976,19 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                             R.id.btnZoomOut,
                             R.id.btnZoomIn,
                             R.id.btnMask,
-                            R.id.btnAnchor
+                            R.id.btnTts
                     )
 
             for (buttonId in toggleBarButtons) {
                 val button = leftToggleBar.findViewById<View>(buttonId)
-                if (isOver(button, screenX, screenY)) {
+                if (isPointInChild(localX, localY, leftToggleBar, button)) {
                     handleLeftMenuAction(buttonId)
                     return
                 }
             }
 
             windowsButton?.let { btn ->
-                if (isOver(btn, screenX, screenY)) {
+                if (isPointInChild(localX, localY, leftToggleBar, btn)) {
                     showButtonClickFeedback(btn)
                     toggleWindowMode()
                     return
@@ -5680,10 +5997,11 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         }
 
         if (leftNavigationBar.visibility == View.VISIBLE) {
-            navButtons.entries.firstOrNull { isOver(it.value.left, screenX, screenY) }?.let {
-                    (key, button) ->
-                triggerNavigationAction(key, button)
-            }
+            navButtons.entries.firstOrNull {
+                    isPointInChild(localX, localY, leftNavigationBar, it.value.left)
+                }?.let { (key, button) ->
+                    triggerNavigationAction(key, button)
+                }
         }
     }
 
@@ -5744,23 +6062,27 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
     }
 
     private fun handleZoomButtonClick(direction: String) {
-        val zoomFactor = if (direction == "in") 1.1f else 0.9f
-        currentWebZoom *= zoomFactor
-
-        // Save preference
-        context.getSharedPreferences("TapLinkPrefs", Context.MODE_PRIVATE)
-                .edit()
-                .putFloat("webZoomLevel", currentWebZoom)
-                .apply()
-
+        // For ar_nav.html: delegate to the 3D map's own zoom handler
         webView.evaluateJavascript(
                 """
         (function() {
-            document.body.style.zoom = "$currentWebZoom";
+            if (window.__arNavZoom) { window.__arNavZoom('$direction'); return; }
+            document.body.style.zoom = "${if (direction == "in") currentWebZoom * 1.1f else currentWebZoom * 0.9f}";
         })();
     """,
                 null
         )
+
+        // Only update CSS zoom tracking for non-AR pages
+        val url = webView.url ?: ""
+        if (!url.contains("ar_nav.html")) {
+            val zoomFactor = if (direction == "in") 1.1f else 0.9f
+            currentWebZoom *= zoomFactor
+            context.getSharedPreferences("TapLinkPrefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putFloat("webZoomLevel", currentWebZoom)
+                    .apply()
+        }
 
         postDelayed(
                 {
@@ -5816,8 +6138,8 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         }
 
         // Use unbarred anchor icon when anchored
-        leftToggleBar.findViewById<FontIconView>(R.id.btnAnchor)?.text =
-                context.getString(R.string.fa_anchor)
+        leftToggleBar.findViewById<FontIconView>(R.id.btnTts)?.text =
+                context.getString(R.string.fa_volume_high)
     }
 
     fun stopAnchoring() {
@@ -5835,8 +6157,8 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
             leftBookmarksView.setAnchoredMode(false)
         }
 
-        leftToggleBar.findViewById<FontIconView>(R.id.btnAnchor)?.text =
-                context.getString(R.string.fa_anchor_circle_xmark)
+        leftToggleBar.findViewById<FontIconView>(R.id.btnTts)?.text =
+                context.getString(R.string.fa_volume_high)
         webView.visibility = View.VISIBLE
         // REFACTORED: rightEyeView no longer used - single viewport mode
         // rightEyeView.visibility = View.VISIBLE
@@ -5955,7 +6277,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         val leftZoomInButton = leftToggleBar.findViewById<FontIconView>(R.id.btnZoomIn)
         val leftZoomOutButton = leftToggleBar.findViewById<FontIconView>(R.id.btnZoomOut)
         val leftMaskButton = leftToggleBar.findViewById<FontIconView>(R.id.btnMask)
-        val leftAnchorButton = leftToggleBar.findViewById<FontIconView>(R.id.btnAnchor)
+        val leftTtsButton = leftToggleBar.findViewById<FontIconView>(R.id.btnTts)
 
         // Create Windows button programmatically since it's not in XML
         val leftWindowsButton =
@@ -5992,7 +6314,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                         leftZoomOutButton,
                         leftZoomInButton,
                         leftMaskButton,
-                        leftAnchorButton
+                        leftTtsButton
                 )
 
         orderedButtons.forEach { button ->
@@ -6004,12 +6326,8 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                     background =
                             ContextCompat.getDrawable(context, R.drawable.nav_button_background)
                     // Icon already set via XML text attribute
-                    if (id == R.id.btnAnchor) {
-                        text =
-                                context.getString(
-                                        if (isAnchored) R.string.fa_anchor
-                                        else R.string.fa_anchor_circle_xmark
-                                )
+                    if (id == R.id.btnTts) {
+                        text = context.getString(R.string.fa_volume_high)
                     }
                     setPadding(iconPadding, iconPadding, iconPadding, iconPadding)
                     elevation = 4f
@@ -6036,7 +6354,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                         leftZoomOutButton to R.id.btnZoomOut,
                         leftZoomInButton to R.id.btnZoomIn,
                         leftMaskButton to R.id.btnMask,
-                        leftAnchorButton to R.id.btnAnchor
+                        leftTtsButton to R.id.btnTts
                 )
                 .forEach { (button, id) -> button?.setOnClickListener { handleLeftMenuAction(id) } }
 
@@ -6973,12 +7291,20 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        sharedConfigPrefs.registerOnSharedPreferenceChangeListener(sharedConfigListener)
+        sharedConfigListenerRegistered = true
+        updateSystemInfoBarVisibility()
         startRefreshing()
     }
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        if (sharedConfigListenerRegistered) {
+            sharedConfigPrefs.unregisterOnSharedPreferenceChangeListener(sharedConfigListener)
+            sharedConfigListenerRegistered = false
+        }
         stopRefreshing()
+        releaseAudioCapture()
     }
 
     override fun onWindowVisibilityChanged(visibility: Int) {
@@ -7007,7 +7333,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 
             leftToggleBar.isClickable = false
             leftNavigationBar.isClickable = false
-            leftSystemInfoView.visibility = View.GONE
+            updateSystemInfoBarVisibility()
 
             // Then animate menus away
             leftToggleBar
@@ -7036,7 +7362,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                 // Re-enable touch interception and show system info bar
                 leftToggleBar.isClickable = true
                 leftNavigationBar.isClickable = true
-                leftSystemInfoView.visibility = View.VISIBLE
+                updateSystemInfoBarVisibility()
 
                 // Then show menus with animation
                 leftToggleBar.visibility = View.VISIBLE
@@ -7080,7 +7406,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
             // Immediately disable touch interception before animating
             leftToggleBar.isClickable = false
             leftNavigationBar.isClickable = false
-            leftSystemInfoView.visibility = View.GONE
+            updateSystemInfoBarVisibility()
 
             // Then animate menus away
             leftToggleBar
@@ -7109,7 +7435,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                 // Re-enable touch interception and show system info bar
                 leftToggleBar.isClickable = true
                 leftNavigationBar.isClickable = true
-                leftSystemInfoView.visibility = View.VISIBLE
+                updateSystemInfoBarVisibility()
 
                 // Then show menus with animation
                 leftToggleBar.visibility = View.VISIBLE
@@ -7609,6 +7935,29 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 
     private fun setupMaskOverlayUI() {
 
+        maskNowPlayingText =
+                TextView(context).apply {
+                    setTextColor(Color.argb(128, 255, 255, 255))
+                    textSize = 12f
+                    gravity = Gravity.CENTER
+                    maxLines = 1
+                    ellipsize = TextUtils.TruncateAt.END
+                    visibility = View.GONE
+                    alpha = 0.5f
+                }
+        val nowPlayingParams =
+                FrameLayout.LayoutParams(
+                                FrameLayout.LayoutParams.MATCH_PARENT,
+                                FrameLayout.LayoutParams.WRAP_CONTENT
+                        )
+                        .apply {
+                            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                            leftMargin = 56
+                            rightMargin = 56
+                            bottomMargin = 54
+                        }
+        maskOverlay.addView(maskNowPlayingText, nowPlayingParams)
+
         // Unmask button (Bottom Right)
         btnMaskUnmask =
                 ImageButton(context).apply {
@@ -7616,6 +7965,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                     setBackgroundColor(Color.TRANSPARENT)
                     scaleType = ImageView.ScaleType.FIT_CENTER
                     setPadding(8, 8, 8, 8)
+                    alpha = 0.5f
                     setOnClickListener { unmaskScreen() }
                 }
         val unmaskParams =
@@ -7632,6 +7982,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER
                     setBackgroundColor(Color.TRANSPARENT)
+                    alpha = 0.5f
                     visibility = View.GONE // Hidden by default until media detected
                 }
         val controlsParams =
@@ -7645,12 +7996,13 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         btnMaskPrevTrack =
                 createMediaButton(R.string.fa_backward_step) {
                     // Try to click previous track button (works on YouTube, Spotify, etc.)
-                    getMediaControlWebView()
-                            .evaluateJavascript(
-                                    """
+                    val targetWebView = getMediaControlWebView()
+                    evaluateMediaControlCommand(
+                            targetWebView,
+                            """
                 (function() {
                     // Try common previous track selectors
-                    var prevBtn = document.querySelector('.ytp-prev-button') || 
+                    var prevBtn = document.querySelector('.ytp-prev-button') ||
                                   document.querySelector('[aria-label*="previous" i]') ||
                                   document.querySelector('[title*="previous" i]') ||
                                   document.querySelector('button[data-testid="control-button-skip-back"]');
@@ -7660,24 +8012,27 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                     if (media) media.currentTime = 0;
                 })();
             """.trimIndent(),
-                                    null
-                            )
+                            "(function(){ if(window.prevStation){ window.prevStation(); } })();"
+                    )
+                    scheduleTrackChangeRefresh()
                 }
         btnMaskPrev =
                 createMediaButton(R.string.fa_backward) {
-                    getMediaControlWebView()
-                            .evaluateJavascript(
-                                    "document.querySelector('video, audio').currentTime -= 10;",
-                                    null
-                            )
+                    val targetWebView = getMediaControlWebView()
+                    evaluateMediaControlCommand(
+                            targetWebView,
+                            "document.querySelector('video, audio').currentTime -= 10;",
+                            "(function(){ if(window.prevStation){ window.prevStation(); } })();"
+                    )
                 }
         btnMaskPlay =
                 createMediaButton(R.string.fa_play) {
-                    getMediaControlWebView()
-                            .evaluateJavascript(
-                                    "document.querySelector('video, audio').play();",
-                                    null
-                            )
+                    val targetWebView = getMediaControlWebView()
+                    evaluateMediaControlCommand(
+                            targetWebView,
+                            "document.querySelector('video, audio').play();",
+                            "(function(){ if(window.tapRadioNativeResumePlayback){ window.tapRadioNativeResumePlayback(); return; } if(window.togglePlay){ window.togglePlay(); } })();"
+                    )
                     // Immediately update button visibility for responsive UI
                     lastMediaInteractionTime = SystemClock.uptimeMillis()
                     btnMaskPlay.visibility = View.GONE
@@ -7686,11 +8041,12 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                 }
         btnMaskPause =
                 createMediaButton(R.string.fa_pause) {
-                    getMediaControlWebView()
-                            .evaluateJavascript(
-                                    "document.querySelector('video, audio').pause();",
-                                    null
-                            )
+                    val targetWebView = getMediaControlWebView()
+                    evaluateMediaControlCommand(
+                            targetWebView,
+                            "document.querySelector('video, audio').pause();",
+                            "(function(){ if(window.tapRadioNativePausePlayback){ window.tapRadioNativePausePlayback(); return; } if(window.togglePlay){ window.togglePlay(); } })();"
+                    )
                     // Immediately update button visibility for responsive UI
                     lastMediaInteractionTime = SystemClock.uptimeMillis()
                     btnMaskPause.visibility = View.GONE
@@ -7699,21 +8055,23 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                 }
         btnMaskNext =
                 createMediaButton(R.string.fa_forward) {
-                    getMediaControlWebView()
-                            .evaluateJavascript(
-                                    "document.querySelector('video, audio').currentTime += 10;",
-                                    null
-                            )
+                    val targetWebView = getMediaControlWebView()
+                    evaluateMediaControlCommand(
+                            targetWebView,
+                            "document.querySelector('video, audio').currentTime += 10;",
+                            "(function(){ if(window.nextStation){ window.nextStation(); } })();"
+                    )
                 }
         btnMaskNextTrack =
                 createMediaButton(R.string.fa_forward_step) {
                     // Try to click next track button (works on YouTube, Spotify, etc.)
-                    getMediaControlWebView()
-                            .evaluateJavascript(
-                                    """
+                    val targetWebView = getMediaControlWebView()
+                    evaluateMediaControlCommand(
+                            targetWebView,
+                            """
                 (function() {
                     // Try common next track selectors
-                    var nextBtn = document.querySelector('.ytp-next-button') || 
+                    var nextBtn = document.querySelector('.ytp-next-button') ||
                                   document.querySelector('[aria-label*="next" i]') ||
                                   document.querySelector('[title*="next" i]') ||
                                   document.querySelector('button[data-testid="control-button-skip-forward"]');
@@ -7723,8 +8081,11 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                     if (media) media.currentTime = media.duration;
                 })();
             """.trimIndent(),
-                                    null
-                            )
+                            "(function(){ if(window.nextStation){ window.nextStation(); } })();"
+                    )
+                    // YouTube SPA navigations take several seconds to update the title.
+                    // Schedule aggressive delayed refreshes to catch the new video name.
+                    scheduleTrackChangeRefresh()
                 }
 
         btnMaskPause.visibility = View.GONE // Initially show Play
@@ -7735,6 +8096,2243 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         maskMediaControlsContainer.addView(btnMaskPause)
         maskMediaControlsContainer.addView(btnMaskNext)
         maskMediaControlsContainer.addView(btnMaskNextTrack)
+
+        // ── Audio Visualizer ──
+        maskVisualizerView = AudioVisualizerView(context).apply {
+            visibility = View.GONE
+            alpha = 0.6f
+        }
+        val vizParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, 180
+        ).apply {
+            gravity = Gravity.CENTER
+            leftMargin = 40
+            rightMargin = 40
+        }
+        maskOverlay.addView(maskVisualizerView, vizParams)
+
+        // Toggle button — placed to the right of the now-playing text
+        btnVisualizerToggle = FontIconView(context).apply {
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setShadowLayer(8f, 0f, 0f, Color.parseColor("#FF00FF"))
+            // Click: true toggle on/off. Theme cycling stays on the visualizer surface itself.
+            setOnClickListener {
+                val now = SystemClock.uptimeMillis()
+                if (now - lastVisualizerToggleTime < 200) return@setOnClickListener
+                lastVisualizerToggleTime = now
+                if (!isVisualizerVisible) {
+                    showVisualizer()
+                } else {
+                    hideVisualizer()
+                }
+            }
+        }
+        updateVisualizerButtonColor()
+        val vizToggleParams = FrameLayout.LayoutParams(44, 44).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            rightMargin = 52
+            bottomMargin = 46
+        }
+        maskOverlay.addView(btnVisualizerToggle, vizToggleParams)
+    }
+
+    private fun showVisualizer() {
+        isVisualizerVisible = true
+        maskVisualizerView.visibility = View.VISIBLE
+        maskVisualizerView.bringToFront()
+        maskVisualizerView.startAnimating()
+        startAudioCapture()
+        // Bring controls and text back to front
+        maskMediaControlsContainer.bringToFront()
+        maskNowPlayingText.bringToFront()
+        btnVisualizerToggle.bringToFront()
+        btnVisualizerToggle.alpha = 1.0f
+        updateVisualizerButtonColor()
+    }
+
+    private fun hideVisualizer() {
+        isVisualizerVisible = false
+        stopAudioCapture()
+        maskVisualizerView.stopAnimating()
+        maskVisualizerView.visibility = View.GONE
+        btnVisualizerToggle.alpha = 0.5f
+        updateVisualizerButtonColor()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startAudioCapture() {
+        // Reuse existing Visualizer if already created — releasing and recreating
+        // Visualizer(0) disrupts the audio pipeline and can stop TapRadio playback.
+        val existing = audioVisualizer
+        if (existing != null) {
+            try {
+                if (!existing.enabled) existing.enabled = true
+                Log.d("AudioViz", "Visualizer re-enabled (reused existing instance)")
+                return
+            } catch (e: Exception) {
+                // Existing instance is dead, release and recreate
+                Log.w("AudioViz", "Existing visualizer unusable, recreating: ${e.message}")
+                try { existing.release() } catch (_: Exception) {}
+                audioVisualizer = null
+            }
+        }
+        try {
+            // Session 0 = mix of all audio output
+            val viz = Visualizer(0)
+            viz.captureSize = Visualizer.getCaptureSizeRange()[1]  // max for best resolution
+            viz.setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
+                override fun onWaveFormDataCapture(v: Visualizer?, waveform: ByteArray?, samplingRate: Int) {}
+                override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, samplingRate: Int) {
+                    if (fft == null) return
+                    val buckets = fftMagnitudes.size
+                    val fftSize = fft.size / 2  // real/imag pairs
+                    val capture = FloatArray(buckets)
+                    for (i in 0 until buckets) {
+                        val startFrac = (i.toFloat() / buckets.toFloat()).toDouble().pow(1.55).toFloat()
+                        val endFrac = ((i + 1).toFloat() / buckets.toFloat()).toDouble().pow(1.55).toFloat()
+                        val start = (startFrac * fftSize).toInt().coerceIn(1, maxOf(1, fftSize - 1))
+                        val end = (endFrac * fftSize).toInt().coerceIn(start + 1, fftSize)
+                        var peakDb = 0f
+                        var avgDb = 0f
+                        var samples = 0
+                        for (bin in start until end) {
+                            val reIdx = bin * 2
+                            val imIdx = reIdx + 1
+                            if (imIdx >= fft.size) break
+                            val re = fft[reIdx].toFloat()
+                            val im = fft[imIdx].toFloat()
+                            val magnitude = kotlin.math.sqrt(re * re + im * im)
+                            val db = (20f * kotlin.math.log10(1f + magnitude)).coerceAtLeast(0f)
+                            if (db > peakDb) peakDb = db
+                            avgDb += db
+                            samples++
+                        }
+                        val meanDb = if (samples > 0) avgDb / samples else 0f
+                        val pos = i.toFloat() / (buckets - 1).coerceAtLeast(1)
+                        val mixedDb = peakDb * 0.58f + meanDb * 0.42f
+                        val normalized = (mixedDb / 44f).coerceIn(0f, 1f)
+                        val eqWeight = when {
+                            pos < 0.16f -> 0.48f + pos * 0.55f
+                            pos < 0.42f -> 0.68f + (pos - 0.16f) * 1.0f
+                            pos < 0.76f -> 0.94f + (pos - 0.42f) * 0.95f
+                            else -> 1.26f + (pos - 0.76f) * 1.55f
+                        }
+                        val compressed = normalized.toDouble().pow(0.72).toFloat()
+                        capture[i] = (compressed * eqWeight).coerceIn(0f, 1f)
+                    }
+                    // Write to back buffer, then atomically swap with front buffer
+                    for (i in 0 until buckets) {
+                        val leftFar = capture[maxOf(0, i - 2)]
+                        val left = capture[maxOf(0, i - 1)]
+                        val center = capture[i]
+                        val right = capture[minOf(buckets - 1, i + 1)]
+                        val rightFar = capture[minOf(buckets - 1, i + 2)]
+                        val pos = i.toFloat() / (buckets - 1).coerceAtLeast(1)
+                        val smoothed = leftFar * 0.08f + left * 0.18f + center * 0.38f + right * 0.22f + rightFar * 0.14f
+                        val stereoBalance = when {
+                            pos < 0.2f -> 0.72f
+                            pos < 0.55f -> 0.82f + (pos - 0.2f) * 0.38f
+                            else -> 0.95f + (pos - 0.55f) * 0.55f
+                        }
+                        fftBackBuffer[i] = (smoothed * stereoBalance).coerceIn(0f, 1f)
+                    }
+                    // Atomic swap: UI thread sees complete frame or previous frame, never partial
+                    val tmp = fftFrontBuffer
+                    fftFrontBuffer = fftBackBuffer
+                    fftBackBuffer = tmp
+                }
+            }, Visualizer.getMaxCaptureRate(), false, true)  // waveform=false, fft=true
+            viz.enabled = true
+            audioVisualizer = viz
+            Log.d("AudioViz", "Visualizer capture started, size=${viz.captureSize}")
+        } catch (e: Exception) {
+            Log.e("AudioViz", "Failed to start Visualizer: ${e.message}")
+            // Fall back to random data mode — fftMagnitudes will stay at 0
+        }
+    }
+
+    private fun stopAudioCapture() {
+        // Only disable — don't release. Releasing Visualizer(0) and recreating it
+        // disrupts the audio pipeline and can stop TapRadio/media playback.
+        try {
+            audioVisualizer?.enabled = false
+        } catch (_: Exception) {}
+        // Zero out both buffers so bars drop to silence
+        fftFrontBuffer.fill(0f)
+        fftBackBuffer.fill(0f)
+    }
+
+    /** Fully release the Visualizer (call on destroy/cleanup only). */
+    fun releaseAudioCapture() {
+        try {
+            audioVisualizer?.enabled = false
+            audioVisualizer?.release()
+        } catch (_: Exception) {}
+        audioVisualizer = null
+        fftFrontBuffer.fill(0f)
+        fftBackBuffer.fill(0f)
+    }
+
+    private fun updatePlaybackWakeLocks() {
+        val shouldHoldMaskWakeLock = isScreenMasked
+        if (shouldHoldMaskWakeLock) {
+            if (!maskWakeLock.isHeld) maskWakeLock.acquire()
+        } else if (maskWakeLock.isHeld) {
+            maskWakeLock.release()
+        }
+
+        // Streaming radio/video needs a steady CPU + Wi-Fi path on these glasses.
+        // The device log shows real AudioTrack underruns, so hold playback resources
+        // for any active media session, not only when the host Activity is paused.
+        val shouldHoldPlaybackWakeLock = isMediaPlaying
+        if (shouldHoldPlaybackWakeLock) {
+            if (!pausedMediaWakeLock.isHeld) pausedMediaWakeLock.acquire()
+            try {
+                if (mediaWifiLock?.isHeld == false) mediaWifiLock.acquire()
+            } catch (_: Exception) {}
+        } else {
+            if (pausedMediaWakeLock.isHeld) pausedMediaWakeLock.release()
+            try {
+                if (mediaWifiLock?.isHeld == true) mediaWifiLock.release()
+            } catch (_: Exception) {}
+        }
+    }
+
+    /** Colorful icon that reflects the current visualizer theme */
+    private fun updateVisualizerButtonColor() {
+        if (!::btnVisualizerToggle.isInitialized) return
+        val themeColor = if (!isVisualizerVisible) {
+            Color.argb(160, 180, 120, 255) // Dim purple when off
+        } else {
+            when (maskVisualizerView.currentTheme) {
+                maskVisualizerView.THEME_JAZZ -> Color.parseColor("#FFD700")
+                maskVisualizerView.THEME_WAVE        -> Color.parseColor("#00FFFF")
+                maskVisualizerView.THEME_PULSE_RING  -> Color.parseColor("#FF006E")
+                maskVisualizerView.THEME_SPECTRUM    -> Color.parseColor("#FFAA00")
+                maskVisualizerView.THEME_MEDITATIVE  -> Color.parseColor("#7B68EE")
+                maskVisualizerView.THEME_BREATHE     -> Color.parseColor("#2E8B8B")
+                maskVisualizerView.THEME_TRON             -> Color.parseColor("#00DFFF")
+                maskVisualizerView.THEME_CLOSE_ENCOUNTERS -> Color.parseColor("#FF6600")
+                else -> Color.WHITE
+            }
+        }
+        btnVisualizerToggle.setTextColor(themeColor)
+        btnVisualizerToggle.setShadowLayer(10f, 0f, 0f, themeColor)
+        // Use the wave icon since fa_wave_square may not render in FA Solid
+        btnVisualizerToggle.setText(R.string.fa_bars_staggered)
+    }
+
+    /**
+     * Animated audio visualizer view drawn on Canvas.
+     * Themes cycle on long-press of the toggle button.
+     */
+    inner class AudioVisualizerView(context: Context) : View(context) {
+
+        // Theme constants (enum class not allowed inside inner class)
+        val THEME_JAZZ = 0  // Jazz band — smoky club stage
+        val THEME_WAVE = 1
+        val THEME_PULSE_RING = 2
+        val THEME_SPECTRUM = 3
+        val THEME_MEDITATIVE = 4
+        val THEME_BREATHE = 5
+        val THEME_TRON = 6
+        val THEME_CLOSE_ENCOUNTERS = 7
+        private val THEME_COUNT = 8
+
+        // Breathing timer state
+        private var breathCycleMs = 0L          // elapsed ms in current cycle
+        private var breathInhaleMs = 4000L      // 4s inhale
+        private var breathHoldMs = 1000L        // 1s hold
+        private var breathExhaleMs = 6000L      // 6s exhale
+        private var breathPauseMs = 1000L       // 1s pause
+        private val breathTotalMs get() = breathInhaleMs + breathHoldMs + breathExhaleMs + breathPauseMs
+        private var lastBreathFrameTime = 0L
+
+        var currentTheme = THEME_JAZZ
+            private set
+        private val barCount = 32
+        private val barHeights = FloatArray(barCount)
+        private val targetHeights = FloatArray(barCount)
+        private val velocities = FloatArray(barCount)
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private var animating = false
+        private val random = java.util.Random()
+        private var frameCount = 0L
+        private val wavePath = android.graphics.Path()
+
+        // Theme color palettes
+        private val neonColors = intArrayOf(
+            Color.parseColor("#FF00FF"), Color.parseColor("#00FFFF"),
+            Color.parseColor("#FF006E"), Color.parseColor("#00FF88"),
+            Color.parseColor("#8B5CF6"), Color.parseColor("#06B6D4")
+        )
+        private val spectrumColors = intArrayOf(
+            Color.parseColor("#FF0000"), Color.parseColor("#FF7700"),
+            Color.parseColor("#FFFF00"), Color.parseColor("#00FF00"),
+            Color.parseColor("#0077FF"), Color.parseColor("#8800FF")
+        )
+
+        fun cycleTheme() {
+            currentTheme = (currentTheme + 1) % THEME_COUNT
+            invalidate()
+        }
+
+        private fun applyTheme(theme: Int) {
+            currentTheme = ((theme % THEME_COUNT) + THEME_COUNT) % THEME_COUNT
+            frameCount = 0L
+            breathCycleMs = 0L
+            lastBreathFrameTime = 0L
+            wavePath.reset()
+            paint.reset()
+            paint.isAntiAlias = true
+            paint.setShadowLayer(0f, 0f, 0f, 0)
+            invalidate()
+        }
+
+        /** Advance theme sequentially and wrap back to the first theme without hiding. */
+        fun cycleThemeOrWrap(): Boolean {
+            applyTheme(currentTheme + 1)
+            updateVisualizerButtonColor()
+            return false
+        }
+
+        fun startAnimating() {
+            animating = true
+            applyTheme(currentTheme)
+            postInvalidateOnAnimation()
+        }
+
+        fun stopAnimating() {
+            animating = false
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            if (!animating) return
+
+            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+            paint.reset()
+            paint.isAntiAlias = true
+            paint.setShadowLayer(0f, 0f, 0f, 0)
+            paint.shader = null
+            paint.textAlign = Paint.Align.LEFT
+            paint.typeface = android.graphics.Typeface.DEFAULT
+            wavePath.reset()
+
+            val w = width.toFloat()
+            val h = height.toFloat()
+            if (w <= 0 || h <= 0) return
+
+            // Pull real FFT magnitudes from the audio capture
+            frameCount++
+            for (i in 0 until barCount) {
+                targetHeights[i] = fftMagnitudes[i]
+            }
+            // Smooth interpolation — fast attack, slower decay for punchy response
+            for (i in 0 until barCount) {
+                val target = targetHeights[i]
+                if (target > barHeights[i]) {
+                    // Fast attack: snap up quickly to new peaks
+                    barHeights[i] = barHeights[i] * 0.3f + target * 0.7f
+                } else {
+                    // Slower decay: smooth falloff for visual appeal
+                    barHeights[i] = barHeights[i] * 0.75f + target * 0.25f
+                }
+                barHeights[i] = barHeights[i].coerceIn(0.0f, 1f)
+            }
+
+            when (currentTheme) {
+                THEME_JAZZ -> drawJazzBand(canvas, w, h)
+                THEME_WAVE -> drawWave(canvas, w, h)
+                THEME_PULSE_RING -> drawPulseRing(canvas, w, h)
+                THEME_SPECTRUM -> drawSpectrum(canvas, w, h)
+                THEME_MEDITATIVE -> drawMeditative(canvas, w, h)
+                THEME_BREATHE -> drawBreathe(canvas, w, h)
+                THEME_TRON -> drawTron(canvas, w, h)
+                THEME_CLOSE_ENCOUNTERS -> drawCloseEncounters(canvas, w, h)
+            }
+
+            if (animating) postInvalidateOnAnimation()
+        }
+
+        private fun bandEnergy(startInclusive: Int, endInclusive: Int): Float {
+            val safeStart = startInclusive.coerceIn(0, barCount - 1)
+            val safeEnd = endInclusive.coerceIn(safeStart, barCount - 1)
+            var total = 0f
+            var count = 0
+            for (i in safeStart..safeEnd) {
+                total += barHeights[i]
+                count++
+            }
+            return if (count > 0) total / count else 0f
+        }
+
+        private fun remapVisualizerPosition(pos: Float): Float {
+            val clamped = pos.coerceIn(0f, 1f)
+            val curved = clamped.toDouble().pow(1.18).toFloat()
+            return (curved * 0.78f + clamped * 0.22f).coerceIn(0f, 1f)
+        }
+
+        private fun bandWindow(centerPos: Float, radius: Int = 2): Float {
+            val center = (centerPos.coerceIn(0f, 1f) * (barCount - 1)).toInt().coerceIn(0, barCount - 1)
+            var total = 0f
+            var weightSum = 0f
+            for (offset in -radius..radius) {
+                val idx = (center + offset).coerceIn(0, barCount - 1)
+                val weight = 1f / (1f + kotlin.math.abs(offset).toFloat())
+                total += barHeights[idx] * weight
+                weightSum += weight
+            }
+            return if (weightSum > 0f) total / weightSum else 0f
+        }
+
+        private fun measuredAudioAt(pos: Float, lowCut: Float = 0.82f, highBoost: Float = 1.22f): Float {
+            val remapped = remapVisualizerPosition(pos)
+            val wide = bandWindow(remapped, 3)
+            val tight = bandWindow(remapped, 1)
+            val blended = (wide * 0.45f + tight * 0.55f).coerceIn(0f, 1f)
+            val tonalWeight = when {
+                remapped < 0.18f -> lowCut
+                remapped < 0.52f -> 0.9f + (remapped - 0.18f) * 0.55f
+                else -> 1.02f + (remapped - 0.52f) * ((highBoost - 1.02f) / 0.48f)
+            }
+            val compressed = blended.toDouble().pow(0.82).toFloat()
+            return (compressed * tonalWeight).coerceIn(0f, 1f)
+        }
+
+        private fun measuredYOffset(sample: Float, amplitude: Float, floor: Float = 0.28f): Float {
+            return (sample - floor) * amplitude
+        }
+
+        /**
+         * RayNeo Rim Theme — AR glasses frame visualization with
+         * cyan/silver rim effects reacting to audio. The outer border glows
+         * with bass energy, inner frames are sharp, and flowing energy effects
+         * pulse along the edges. Premium futuristic look for the RayNeo X3 Pro.
+         */
+        /**
+         * Jazz Band Theme — Smoky club stage with 5 musicians.
+         *
+         * Same methodology as orchestra: unit-scale `u` from canvas height,
+         * frequency-band-driven animation, musicians freeze when silent.
+         * Musicians: drummer (bass), upright bassist (bass+lowMid),
+         * pianist (highMid), saxophonist (treble), trumpet (treble+highMid).
+         */
+        private fun drawJazzBand(canvas: Canvas, w: Float, h: Float) {
+            val avgLevel = bandEnergy(0, barCount - 1)
+            val bass = bandEnergy(0, 6)
+            val lowMid = bandEnergy(7, 14)
+            val highMid = bandEnergy(15, 23)
+            val treble = bandEnergy(24, 31)
+            val active = avgLevel > 0.04f
+            val motion = if (active) avgLevel.coerceIn(0f, 1f) else 0f
+
+            // Unit scale — fills glasses frame edge-to-edge
+            val u = h * 0.035f
+            val stageTop = h * 0.40f
+            val stageCenterY = h * 0.62f
+
+            // Time bases (same doubled speed as orchestra)
+            val tSlow = frameCount * 0.044f
+            val tMed  = frameCount * 0.070f
+
+            // ── Background: dark smoky jazz club ──
+            paint.style = Paint.Style.FILL
+            paint.shader = android.graphics.LinearGradient(
+                0f, 0f, 0f, h,
+                intArrayOf(
+                    Color.parseColor("#08040E"),
+                    Color.parseColor("#140C1A"),
+                    Color.parseColor("#1A0E08")
+                ),
+                floatArrayOf(0f, 0.5f, 1f),
+                android.graphics.Shader.TileMode.CLAMP
+            )
+            canvas.drawRect(0f, 0f, w, h, paint)
+            paint.shader = null
+
+            // Smoky haze — subtle warm fog layers
+            if (motion > 0.02f) {
+                val hazeAlpha = (motion * 14f).toInt().coerceIn(0, 18)
+                paint.color = Color.argb(hazeAlpha, 180, 140, 90)
+                canvas.drawRect(0f, h * 0.15f, w, h * 0.55f, paint)
+                paint.color = Color.argb(hazeAlpha / 2, 120, 80, 160)
+                canvas.drawRect(0f, h * 0.05f, w, h * 0.35f, paint)
+            }
+
+            // Stage floor — warm wood tones
+            paint.color = Color.argb(85, 160, 100, 40)
+            canvas.drawOval(w * 0.02f, stageTop, w * 0.98f, h * 1.05f, paint)
+            paint.color = Color.argb(150, 30, 16, 8)
+            canvas.drawRect(0f, stageTop + 2f, w, h, paint)
+            paint.style = Paint.Style.STROKE
+            paint.color = Color.argb(80, 220, 170, 80)
+            paint.strokeWidth = 1.2f
+            canvas.drawLine(w * 0.02f, stageTop, w * 0.98f, stageTop, paint)
+
+            // Spotlights — warm amber/gold jazz club lighting
+            paint.style = Paint.Style.FILL
+            val sA = (25 + motion * 50f).toInt().coerceIn(25, 80)
+            paint.color = Color.argb(sA, 255, 200, 80)
+            canvas.drawCircle(w * 0.15f, h * 0.06f, 5f + bass * 3f, paint)
+            paint.color = Color.argb(sA, 255, 180, 120)
+            canvas.drawCircle(w * 0.50f, h * 0.03f, 6f + highMid * 3.5f, paint)
+            paint.color = Color.argb(sA, 220, 160, 255)
+            canvas.drawCircle(w * 0.85f, h * 0.06f, 5f + treble * 3f, paint)
+
+            // Light cones
+            if (motion > 0.05f) {
+                paint.color = Color.argb((motion * 14f).toInt().coerceIn(0, 18), 255, 200, 100)
+                val cone = android.graphics.Path()
+                for (spot in floatArrayOf(0.15f, 0.50f, 0.85f)) {
+                    cone.reset()
+                    cone.moveTo(w * spot, h * 0.04f)
+                    cone.lineTo(w * (spot - 0.07f), stageTop)
+                    cone.lineTo(w * (spot + 0.07f), stageTop)
+                    cone.close()
+                    canvas.drawPath(cone, paint)
+                }
+            }
+
+            // ═══ Drawing helpers ═══
+            // Diverse skin tone palette
+            val skinTones = intArrayOf(
+                Color.parseColor("#FCDEC0"),  // light
+                Color.parseColor("#C68642"),  // medium brown
+                Color.parseColor("#8D5524"),  // dark brown
+                Color.parseColor("#E0AC69"),  // golden
+                Color.parseColor("#503335")   // deep brown
+            )
+            val headR = u * 1.6f
+            val bodyW = u * 2.8f
+            val bodyH = u * 8f
+            val armW = u * 0.18f + 1.2f
+
+            fun drawHead(hx: Float, hy: Float, r: Float, skinColor: Int = skinTones[0]) {
+                paint.style = Paint.Style.FILL
+                paint.color = skinColor
+                canvas.drawCircle(hx, hy, r, paint)
+                // Subtle shadow for depth
+                paint.color = Color.argb(45, 20, 12, 8)
+                canvas.drawCircle(hx, hy + r * 0.18f, r * 0.82f, paint)
+            }
+
+            fun drawTorso(bx: Float, top: Float, bw: Float, bh: Float, color: Int) {
+                paint.style = Paint.Style.FILL
+                paint.color = color
+                canvas.drawRoundRect(bx - bw / 2f, top, bx + bw / 2f, top + bh, bw * 0.28f, bw * 0.28f, paint)
+            }
+
+            fun drawLimb(sx: Float, sy: Float, ex: Float, ey: Float, hx: Float, hy: Float, width: Float, color: Int) {
+                paint.style = Paint.Style.STROKE
+                paint.strokeCap = Paint.Cap.ROUND
+                paint.strokeJoin = Paint.Join.ROUND
+                paint.strokeWidth = width
+                paint.color = color
+                canvas.drawLine(sx, sy, ex, ey, paint)
+                canvas.drawLine(ex, ey, hx, hy, paint)
+            }
+
+            // ═══ Jazz Musicians ═══
+
+            // ── DRUMMER (bass-reactive) ──
+            fun drawDrummer(cx: Float, cy: Float, energy: Float, skinColor: Int, seed: Float) {
+                val e = if (active) energy.coerceIn(0f, 1f) else 0f
+                val torsoTop = cy - u * 5f
+                val shoulderY = cy - u * 2.4f
+                val shoulderL = cx - u * 1.3f
+                val shoulderR = cx + u * 1.3f
+
+                val sway = kotlin.math.sin((tSlow + seed).toDouble()).toFloat() * e * u * 0.3f
+                drawHead(cx + sway * 0.2f, torsoTop - headR * 1.1f, headR, skinColor)
+                drawTorso(cx + sway * 0.1f, torsoTop, bodyW, bodyH, Color.parseColor("#2A1A1A"))
+
+                // Snare drum (center-left)
+                paint.style = Paint.Style.FILL
+                paint.color = Color.parseColor("#C0C0C8")
+                canvas.drawOval(cx - u * 2.5f, cy + u * 0.5f, cx + u * 0.5f, cy + u * 2f, paint)
+                paint.color = Color.parseColor("#888890")
+                canvas.drawOval(cx - u * 2.5f, cy + u * 0.3f, cx + u * 0.5f, cy + u * 0.7f, paint)
+
+                // Hi-hat cymbal (right side)
+                paint.color = Color.parseColor("#D4C870")
+                paint.alpha = 180
+                canvas.drawOval(cx + u * 1.2f, cy - u * 0.8f, cx + u * 3.5f, cy - u * 0.2f, paint)
+
+                // Bass drum (behind, below)
+                paint.alpha = 255
+                paint.color = Color.parseColor("#3A2020")
+                canvas.drawCircle(cx, cy + u * 4f, u * 2.5f, paint)
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = u * 0.15f
+                paint.color = Color.parseColor("#C0A050")
+                canvas.drawCircle(cx, cy + u * 4f, u * 2.5f, paint)
+
+                // Left arm: hitting snare — sharp downbeat motion
+                val hitL = kotlin.math.sin((tMed * 2.2f + seed).toDouble()).toFloat()
+                val stickSwingL = hitL * e * (u * 0.8f + e * u * 2f)
+                val elbowL_x = shoulderL - u * 0.5f
+                val elbowL_y = cy - u * 0.4f + stickSwingL * 0.3f
+                val handL_x = cx - u * 1.2f
+                val handL_y = cy + u * 0.3f + stickSwingL * 0.5f
+                drawLimb(shoulderL, shoulderY, elbowL_x, elbowL_y, handL_x, handL_y, armW, skinColor)
+                // Drumstick
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 1.2f
+                paint.color = Color.parseColor("#E8D8B0")
+                canvas.drawLine(handL_x, handL_y, handL_x - u * 1f, handL_y + u * 1.2f + stickSwingL * 0.3f, paint)
+
+                // Right arm: hitting hi-hat — offset rhythm
+                val hitR = kotlin.math.sin((tMed * 2.8f + seed * 1.7f).toDouble()).toFloat()
+                val stickSwingR = hitR * e * (u * 0.6f + e * u * 1.8f)
+                val elbowR_x = shoulderR + u * 0.6f
+                val elbowR_y = cy - u * 0.8f + stickSwingR * 0.25f
+                val handR_x = cx + u * 2f
+                val handR_y = cy - u * 0.5f + stickSwingR * 0.4f
+                drawLimb(shoulderR, shoulderY, elbowR_x, elbowR_y, handR_x, handR_y, armW, skinColor)
+                // Drumstick
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 1.2f
+                paint.color = Color.parseColor("#E8D8B0")
+                canvas.drawLine(handR_x, handR_y, handR_x + u * 0.6f, handR_y + u * 1f + stickSwingR * 0.2f, paint)
+            }
+
+            // ── UPRIGHT BASSIST (bass + lowMid) ──
+            fun drawBassist(cx: Float, cy: Float, energy: Float, skinColor: Int, seed: Float) {
+                val e = if (active) energy.coerceIn(0f, 1f) else 0f
+                val torsoTop = cy - u * 5.5f
+                val shoulderY = cy - u * 2.8f
+                val shoulderL = cx - u * 1.2f
+                val shoulderR = cx + u * 1.2f
+
+                val sway = kotlin.math.sin((tSlow * 0.9f + seed).toDouble()).toFloat() * e * u * 0.5f
+                drawHead(cx + sway * 0.3f, torsoTop - headR * 1.1f, headR, skinColor)
+                drawTorso(cx + sway * 0.12f, torsoTop, bodyW, bodyH, Color.parseColor("#1A2838"))
+
+                // Upright bass body — tall pear shape to the right
+                val bx = cx + u * 2f
+                paint.style = Paint.Style.FILL
+                paint.color = Color.parseColor("#6A3818")
+                val bassPath = android.graphics.Path()
+                bassPath.moveTo(bx, cy - u * 5f)       // scroll top
+                bassPath.lineTo(bx - u * 0.3f, cy - u * 3f) // neck
+                bassPath.quadTo(bx - u * 2f, cy - u * 0.5f, bx - u * 1.8f, cy + u * 2f) // upper bout
+                bassPath.quadTo(bx, cy + u * 5f, bx + u * 1.8f, cy + u * 2f) // lower bout
+                bassPath.quadTo(bx + u * 2f, cy - u * 0.5f, bx + u * 0.3f, cy - u * 3f) // upper bout right
+                bassPath.close()
+                canvas.drawPath(bassPath, paint)
+                // F-holes
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 0.8f
+                paint.color = Color.parseColor("#3A1E0C")
+                canvas.drawLine(bx - u * 0.8f, cy - u * 0.2f, bx - u * 0.6f, cy + u * 1.2f, paint)
+                canvas.drawLine(bx + u * 0.6f, cy - u * 0.2f, bx + u * 0.8f, cy + u * 1.2f, paint)
+                // Strings
+                paint.strokeWidth = 0.5f
+                paint.color = Color.parseColor("#DDD0B0")
+                for (s in -1..1 step 2) {
+                    canvas.drawLine(bx + s * u * 0.2f, cy - u * 4.5f, bx + s * u * 0.3f, cy + u * 4f, paint)
+                }
+
+                // Left arm: fingering the neck — vibrato
+                val vib = kotlin.math.sin((tMed * 2f + seed * 2.5f).toDouble()).toFloat() * e * u * 0.5f
+                drawLimb(
+                    shoulderL, shoulderY,
+                    cx + u * 0.5f, cy - u * 2f,
+                    bx - u * 0.1f, cy - u * 2.8f + vib,
+                    armW, skinColor
+                )
+
+                // Right arm: plucking strings — visible pull motion
+                val pluckPhase = kotlin.math.sin((tMed * 1.4f + seed * 1.9f).toDouble()).toFloat()
+                val pluck = pluckPhase * e * (u * 0.8f + e * u * 2f)
+                drawLimb(
+                    shoulderR, shoulderY,
+                    cx + u * 1.8f, cy - u * 0.2f + pluck * 0.2f,
+                    bx - u * 0.5f, cy + u * 0.8f + pluck * 0.4f,
+                    armW, skinColor
+                )
+            }
+
+            // ── PIANIST (highMid-reactive) ──
+            fun drawPianist(cx: Float, cy: Float, energy: Float, skinColor: Int, seed: Float) {
+                val e = if (active) energy.coerceIn(0f, 1f) else 0f
+                val torsoTop = cy - u * 4.5f
+                val shoulderY = cy - u * 2.2f
+                val shoulderL = cx - u * 1.1f
+                val shoulderR = cx + u * 1.1f
+
+                val lean = kotlin.math.sin((tSlow * 0.8f + seed).toDouble()).toFloat() * e * u * 0.3f
+                drawHead(cx + lean * 0.3f, torsoTop - headR * 1.1f, headR, skinColor)
+                drawTorso(cx + lean * 0.12f, torsoTop, bodyW * 0.95f, bodyH * 0.9f, Color.parseColor("#222240"))
+
+                // Piano top / keyboard — horizontal bar in front
+                val pianoL = cx - u * 3.5f
+                val pianoR = cx + u * 3.5f
+                val pianoTop = cy + u * 1f
+                val pianoBot = cy + u * 2.5f
+                paint.style = Paint.Style.FILL
+                paint.color = Color.parseColor("#0A0A0A")
+                canvas.drawRoundRect(pianoL, pianoTop, pianoR, pianoBot, u * 0.3f, u * 0.3f, paint)
+
+                // White keys
+                val keyCount = 14
+                val keyW = (pianoR - pianoL) / keyCount
+                paint.color = Color.parseColor("#F0EDE0")
+                for (k in 0 until keyCount) {
+                    val kx = pianoL + k * keyW + 0.5f
+                    canvas.drawRect(kx, pianoTop + u * 0.1f, kx + keyW - 1f, pianoBot - u * 0.1f, paint)
+                }
+                // Black keys
+                paint.color = Color.parseColor("#1A1A1A")
+                val blackPattern = intArrayOf(1, 2, 4, 5, 6, 8, 9, 11, 12, 13)
+                for (k in blackPattern) {
+                    if (k < keyCount) {
+                        val kx = pianoL + k * keyW - keyW * 0.15f
+                        canvas.drawRect(kx, pianoTop + u * 0.1f, kx + keyW * 0.6f, pianoTop + u * 0.9f, paint)
+                    }
+                }
+
+                // Arms: both hands play keys — fingers bounce with energy
+                val fingerL = kotlin.math.sin((tMed * 2.2f + seed * 1.1f).toDouble()).toFloat() * e * u * 0.7f
+                val fingerR = kotlin.math.sin((tMed * 2.6f + seed * 1.8f).toDouble()).toFloat() * e * u * 0.7f
+
+                // Left hand on left side of keyboard
+                drawLimb(
+                    shoulderL, shoulderY,
+                    cx - u * 1.5f, cy + u * 0.2f + fingerL * 0.2f,
+                    cx - u * 2f, pianoTop - u * 0.2f + fingerL * 0.4f,
+                    armW, skinColor
+                )
+                // Right hand on right side
+                drawLimb(
+                    shoulderR, shoulderY,
+                    cx + u * 1.5f, cy + u * 0.2f + fingerR * 0.2f,
+                    cx + u * 2f, pianoTop - u * 0.2f + fingerR * 0.4f,
+                    armW, skinColor
+                )
+            }
+
+            // ── SAXOPHONIST (treble-reactive) ──
+            fun drawSaxophonist(cx: Float, cy: Float, energy: Float, dress: Int, skinColor: Int, seed: Float) {
+                val e = if (active) energy.coerceIn(0f, 1f) else 0f
+                val torsoTop = cy - u * 5f
+                val headY = torsoTop - headR * 1.1f
+                val mouthY = headY + headR * 0.4f  // mouth level on face
+                val shoulderY = cy - u * 2.4f
+                val shoulderL = cx - u * 1.2f
+                val shoulderR = cx + u * 1.2f
+
+                // Sway with feeling
+                val sway = kotlin.math.sin((tSlow * 1.2f + seed).toDouble()).toFloat() * e * u * 0.6f
+                val headX = cx + sway * 0.35f
+                drawHead(headX, headY, headR, skinColor)
+                drawTorso(cx + sway * 0.15f, torsoTop, bodyW, bodyH, dress)
+
+                // Saxophone: mouthpiece at face, curves down to bell
+                val mpX = headX + u * 0.6f   // mouthpiece at right side of face
+                val mpY = mouthY
+                paint.style = Paint.Style.STROKE
+                paint.strokeCap = Paint.Cap.ROUND
+                paint.strokeWidth = u * 0.4f
+                paint.color = Color.parseColor("#D4A030")
+                val saxPath = android.graphics.Path()
+                saxPath.moveTo(mpX, mpY)  // mouthpiece at face
+                saxPath.quadTo(cx + u * 1.8f, cy - u * 1f, cx + u * 1.2f, cy + u * 1.5f) // body curve
+                saxPath.quadTo(cx + u * 0.4f, cy + u * 3.5f, cx - u * 0.3f, cy + u * 3f) // bell curve
+                canvas.drawPath(saxPath, paint)
+
+                // Mouthpiece nub at face
+                paint.style = Paint.Style.FILL
+                paint.color = Color.parseColor("#1A1A1A")
+                canvas.drawCircle(mpX, mpY, u * 0.18f, paint)
+
+                // Bell opening
+                val bellPulse = u * 1.2f + e * u * 0.5f
+                paint.color = Color.parseColor("#D4A030")
+                canvas.drawCircle(cx - u * 0.3f, cy + u * 3f, bellPulse, paint)
+                paint.color = Color.parseColor("#2A1808")
+                canvas.drawCircle(cx - u * 0.3f, cy + u * 3f, bellPulse * 0.6f, paint)
+
+                // Keys on saxophone body
+                paint.style = Paint.Style.FILL
+                paint.color = Color.parseColor("#F0D070")
+                val keyPositions = floatArrayOf(0.25f, 0.4f, 0.55f, 0.7f)
+                for (kp in keyPositions) {
+                    val kx = cx + u * (1.6f - kp * 1.2f)
+                    val ky = mpY + (cy + u * 3f - mpY) * kp
+                    canvas.drawCircle(kx, ky, u * 0.14f, paint)
+                }
+
+                // Left hand: upper keys
+                val fingerPhase = kotlin.math.sin((tMed * 1.8f + seed * 1.3f).toDouble()).toFloat()
+                val fingerMove = fingerPhase * e * u * 0.6f
+                drawLimb(
+                    shoulderL, shoulderY,
+                    cx + u * 0.2f, cy - u * 1.8f + fingerMove * 0.15f,
+                    cx + u * 1.2f, cy - u * 1.5f + fingerMove,
+                    armW, skinColor
+                )
+                // Right hand: lower keys
+                drawLimb(
+                    shoulderR, shoulderY,
+                    cx + u * 1.2f, cy - u * 0.2f - fingerMove * 0.1f,
+                    cx + u * 0.8f, cy + u * 0.8f - fingerMove * 0.4f,
+                    armW, skinColor
+                )
+            }
+
+            // ── TRUMPET PLAYER (treble + highMid) ──
+            fun drawTrumpeter(cx: Float, cy: Float, energy: Float, skinColor: Int, seed: Float) {
+                val e = if (active) energy.coerceIn(0f, 1f) else 0f
+                val torsoTop = cy - u * 5f
+                val shoulderY = cy - u * 2.4f
+                val shoulderL = cx - u * 1.2f
+                val shoulderR = cx + u * 1.2f
+                val headY = torsoTop - headR * 1.1f
+                val mouthY = headY + headR * 0.4f  // mouth level
+
+                val sway = kotlin.math.sin((tSlow * 0.85f + seed).toDouble()).toFloat() * e * u * 0.3f
+                drawHead(cx + sway * 0.2f, headY, headR, skinColor)
+                drawTorso(cx + sway * 0.1f, torsoTop, bodyW, bodyH, Color.parseColor("#2A2020"))
+
+                // Trumpet: mouthpiece at face, extends outward to bell
+                val mouthpieceX = cx + u * 0.8f + sway * 0.2f
+                val mouthpieceY = mouthY
+                val bellX = cx + u * 4.5f + sway * 0.15f
+                val bellY = mouthY + u * 0.3f
+                paint.style = Paint.Style.STROKE
+                paint.strokeCap = Paint.Cap.ROUND
+                paint.strokeWidth = u * 0.28f
+                paint.color = Color.parseColor("#D4A840")
+                canvas.drawLine(mouthpieceX, mouthpieceY, bellX, bellY, paint)
+
+                // Mouthpiece nub at face
+                paint.style = Paint.Style.FILL
+                paint.color = Color.parseColor("#E0C050")
+                canvas.drawCircle(mouthpieceX, mouthpieceY, u * 0.15f, paint)
+
+                // Bell at end — pulses with energy
+                val bellR = u * 1f + e * u * 0.4f
+                paint.color = Color.parseColor("#D4A840")
+                canvas.drawCircle(bellX, bellY, bellR, paint)
+                paint.color = Color.parseColor("#3A2A10")
+                canvas.drawCircle(bellX + u * 0.1f, bellY, bellR * 0.55f, paint)
+
+                // Valve casings (on tube midway)
+                paint.style = Paint.Style.FILL
+                paint.color = Color.parseColor("#C09830")
+                for (v in 0..2) {
+                    val t = 0.3f + v * 0.15f
+                    val vx = mouthpieceX + (bellX - mouthpieceX) * t
+                    val vy = mouthpieceY + (bellY - mouthpieceY) * t
+                    canvas.drawRect(vx - u * 0.12f, vy - u * 0.8f, vx + u * 0.12f, vy, paint)
+                }
+
+                // Left arm: holds trumpet near valves — finger action
+                val valvePhase = kotlin.math.sin((tMed * 2f + seed * 1.5f).toDouble()).toFloat()
+                val valveMove = valvePhase * e * u * 0.5f
+                val midTrumpetX = mouthpieceX + (bellX - mouthpieceX) * 0.4f
+                val midTrumpetY = mouthpieceY + (bellY - mouthpieceY) * 0.4f
+                drawLimb(
+                    shoulderL, shoulderY,
+                    cx + u * 0.5f, shoulderY + u * 1.2f + valveMove * 0.15f,
+                    midTrumpetX, midTrumpetY + u * 0.3f + valveMove * 0.3f,
+                    armW, skinColor
+                )
+                // Right arm: supports trumpet further out
+                val farTrumpetX = mouthpieceX + (bellX - mouthpieceX) * 0.6f
+                val farTrumpetY = mouthpieceY + (bellY - mouthpieceY) * 0.6f
+                drawLimb(
+                    shoulderR, shoulderY,
+                    cx + u * 2f, shoulderY + u * 0.8f - valveMove * 0.1f,
+                    farTrumpetX, farTrumpetY + u * 0.3f + valveMove * 0.2f,
+                    armW, skinColor
+                )
+            }
+
+            // ═══ Place jazz musicians — tight club stage, diverse skin tones ═══
+            drawDrummer(w * 0.10f, stageCenterY + u * 0.5f, bass, skinTones[2], 0f)
+            drawBassist(w * 0.28f, stageCenterY + u * 0.3f, bass * 0.6f + lowMid * 0.4f, skinTones[0], 1.2f)
+            drawPianist(w * 0.50f, stageCenterY + u * 1.5f, highMid, skinTones[3], 2.5f)
+            drawSaxophonist(w * 0.72f, stageCenterY + u * 0.2f, treble, Color.parseColor("#2D1530"), skinTones[4], 3.7f)
+            drawTrumpeter(w * 0.90f, stageCenterY + u * 0.4f, treble * 0.5f + highMid * 0.5f, skinTones[1], 4.8f)
+        }
+
+        /**
+         * Classical Orchestra Theme — Musicians on a warm concert stage.
+         *
+         * ALL figure geometry uses a unit scale `u` derived from canvas
+         * height so proportions stay correct regardless of aspect ratio.
+         * When audio is present, every musician visibly plays their
+         * instrument — bow strokes, finger movement, body sway — all
+         * proportional to their frequency band's energy.
+         * When silent, every musician holds still at rest position.
+         */
+        private fun drawWave(canvas: Canvas, w: Float, h: Float) {
+            val avgLevel = bandEnergy(0, barCount - 1)
+            val bass = bandEnergy(0, 6)
+            val lowMid = bandEnergy(7, 14)
+            val highMid = bandEnergy(15, 23)
+            val treble = bandEnergy(24, 31)
+            val active = avgLevel > 0.04f
+            val motion = if (active) avgLevel.coerceIn(0f, 1f) else 0f
+
+            // Unit scale: all musician geometry derives from this.
+            // Large scale fills the glasses frame edge-to-edge.
+            val u = h * 0.035f
+            val stageTop = h * 0.42f
+            val stageCenterY = h * 0.62f
+
+            // Time bases for musical motion (doubled speed: ~1.5s and ~2.4s cycles)
+            val tSlow = frameCount * 0.044f
+            val tMed  = frameCount * 0.070f
+
+            // ── Background ──
+            paint.style = Paint.Style.FILL
+            paint.shader = android.graphics.LinearGradient(
+                0f, 0f, 0f, h,
+                intArrayOf(
+                    Color.parseColor("#06090F"),
+                    Color.parseColor("#0E1722"),
+                    Color.parseColor("#14100C")
+                ),
+                floatArrayOf(0f, 0.55f, 1f),
+                android.graphics.Shader.TileMode.CLAMP
+            )
+            canvas.drawRect(0f, 0f, w, h, paint)
+            paint.shader = null
+
+            // Stage floor — edge-to-edge for baroque close-up
+            paint.color = Color.argb(78, 200, 165, 85)
+            canvas.drawOval(w * 0.02f, stageTop, w * 0.98f, h * 1.05f, paint)
+            paint.color = Color.argb(140, 24, 16, 8)
+            canvas.drawRect(0f, stageTop + 2f, w, h, paint)
+            paint.style = Paint.Style.STROKE
+            paint.color = Color.argb(90, 240, 200, 130)
+            paint.strokeWidth = 1.2f
+            canvas.drawLine(w * 0.02f, stageTop, w * 0.98f, stageTop, paint)
+
+            // Stage spots — spread across full width
+            paint.style = Paint.Style.FILL
+            val sA = (30 + motion * 40f).toInt().coerceIn(30, 75)
+            paint.color = Color.argb(sA, 255, 225, 160)
+            canvas.drawCircle(w * 0.18f, h * 0.08f, 4f + treble * 2.5f, paint)
+            canvas.drawCircle(w * 0.50f, h * 0.04f, 5f + highMid * 3f, paint)
+            canvas.drawCircle(w * 0.82f, h * 0.08f, 4f + lowMid * 2.5f, paint)
+
+            // Light cones — wider to cover full stage
+            if (motion > 0.05f) {
+                paint.color = Color.argb((motion * 18f).toInt().coerceIn(0, 22), 255, 220, 150)
+                val cone = android.graphics.Path()
+                for (spot in floatArrayOf(0.18f, 0.50f, 0.82f)) {
+                    cone.reset()
+                    cone.moveTo(w * spot, h * 0.06f)
+                    cone.lineTo(w * (spot - 0.08f), stageTop)
+                    cone.lineTo(w * (spot + 0.08f), stageTop)
+                    cone.close()
+                    canvas.drawPath(cone, paint)
+                }
+            }
+
+            // ═══ Drawing helpers ═══
+
+            // Diverse skin tone palette
+            val skinTones = intArrayOf(
+                Color.parseColor("#FCDEC0"),  // light
+                Color.parseColor("#C68642"),  // medium brown
+                Color.parseColor("#8D5524"),  // dark brown
+                Color.parseColor("#E0AC69"),  // golden
+                Color.parseColor("#503335"),  // deep brown
+                Color.parseColor("#D4A574"),  // olive
+                Color.parseColor("#A0522D")   // sienna
+            )
+
+            fun drawHead(hx: Float, hy: Float, r: Float, skinColor: Int = skinTones[0]) {
+                paint.style = Paint.Style.FILL
+                paint.color = skinColor
+                canvas.drawCircle(hx, hy, r, paint)
+                paint.color = Color.argb(45, 20, 12, 8)
+                canvas.drawCircle(hx, hy + r * 0.18f, r * 0.82f, paint)
+            }
+
+            fun drawTorso(bx: Float, top: Float, bw: Float, bh: Float, color: Int) {
+                paint.style = Paint.Style.FILL
+                paint.color = color
+                canvas.drawRoundRect(bx - bw / 2f, top, bx + bw / 2f, top + bh, bw * 0.28f, bw * 0.28f, paint)
+            }
+
+            fun drawLimb(sx: Float, sy: Float, ex: Float, ey: Float, hx: Float, hy: Float, width: Float, color: Int) {
+                paint.style = Paint.Style.STROKE
+                paint.strokeCap = Paint.Cap.ROUND
+                paint.strokeJoin = Paint.Join.ROUND
+                paint.strokeWidth = width
+                paint.color = color
+                canvas.drawLine(sx, sy, ex, ey, paint)
+                canvas.drawLine(ex, ey, hx, hy, paint)
+            }
+
+            // ═══ Musicians ═══
+            val headR = u * 1.6f
+            val bodyW = u * 2.8f
+            val bodyH = u * 8f
+            val armW = u * 0.18f + 1.2f  // arm stroke width
+
+            fun drawViolinist(cx: Float, cy: Float, energy: Float, dress: Int, skinColor: Int, seed: Float) {
+                val e = if (active) energy.coerceIn(0f, 1f) else 0f
+                val torsoTop = cy - u * 5f
+                val shoulderY = cy - u * 2.4f
+                val shoulderL = cx - u * 1.2f
+                val shoulderR = cx + u * 1.2f
+
+                // Gentle sway tied to energy
+                val sway = kotlin.math.sin((tSlow + seed).toDouble()).toFloat() * e * u * 0.5f
+                drawHead(cx + sway * 0.3f, torsoTop - headR * 1.1f, headR, skinColor)
+                drawTorso(cx + sway * 0.12f, torsoTop, bodyW, bodyH, dress)
+
+                // Violin body tucked under chin, left side
+                paint.style = Paint.Style.FILL
+                paint.color = Color.parseColor("#A96A2A")
+                val vl = cx - u * 0.5f
+                val vt = cy - u * 1.8f
+                canvas.drawOval(vl, vt, vl + u * 2.8f, vt + u * 2.2f, paint)
+                // Strings
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 0.4f
+                paint.color = Color.parseColor("#DDD0B0")
+                canvas.drawLine(vl + u * 0.7f, vt + u * 0.3f, vl + u * 2.1f, vt + u * 1.9f, paint)
+
+                // Left arm: neck hand — slight vibrato shift
+                val vibrato = kotlin.math.sin((tMed * 2.4f + seed * 3f).toDouble()).toFloat() * e * u * 0.4f
+                drawLimb(
+                    shoulderL, shoulderY,
+                    cx - u * 0.2f, cy - u * 1.4f,
+                    cx + u * 0.8f + vibrato * 0.3f, cy - u * 1.6f - vibrato,
+                    armW, skinColor
+                )
+
+                // Right arm: BOW arm — clear sweeping motion
+                // The bow hand moves in an arc; bow angle rotates with it.
+                val bowPhase = kotlin.math.sin((tMed + seed * 1.7f).toDouble()).toFloat()
+                val bowSwing = bowPhase * e * (u * 1.2f + e * u * 2.5f) // visible motion
+                val elbowR_x = shoulderR + u * 0.8f
+                val elbowR_y = cy - u * 0.6f + bowSwing * 0.3f
+                val handR_x = cx + u * 2f
+                val handR_y = cy + u * 0.2f + bowSwing * 0.5f
+                drawLimb(shoulderR, shoulderY, elbowR_x, elbowR_y, handR_x, handR_y, armW, skinColor)
+
+                // Bow stick
+                paint.style = Paint.Style.STROKE
+                paint.strokeCap = Paint.Cap.ROUND
+                paint.strokeWidth = 1.2f
+                paint.color = Color.parseColor("#E0D0B0")
+                val bowTip_x = cx - u * 1.2f
+                val bowTip_y = cy - u * 1.2f + bowSwing * 0.4f
+                canvas.drawLine(handR_x, handR_y, bowTip_x, bowTip_y, paint)
+
+            }
+
+            fun drawCellist(cx: Float, cy: Float, energy: Float, dress: Int, skinColor: Int, seed: Float) {
+                val e = if (active) energy.coerceIn(0f, 1f) else 0f
+                val torsoTop = cy - u * 5.5f
+                val shoulderY = cy - u * 2.8f
+                val shoulderL = cx - u * 1.2f
+                val shoulderR = cx + u * 1.2f
+
+                val sway = kotlin.math.sin((tSlow * 0.8f + seed).toDouble()).toFloat() * e * u * 0.4f
+                drawHead(cx + sway * 0.25f, torsoTop - headR * 1.1f, headR, skinColor)
+                drawTorso(cx + sway * 0.1f, torsoTop, bodyW * 1.05f, bodyH * 0.95f, dress)
+
+                // Cello body — between knees
+                paint.style = Paint.Style.FILL
+                paint.color = Color.parseColor("#8E5524")
+                canvas.drawRoundRect(
+                    cx - u * 1.6f, cy - u * 1.2f,
+                    cx + u * 1.6f, cy + u * 4.5f,
+                    u * 0.8f, u * 0.8f, paint
+                )
+                // Neck
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 1.2f
+                paint.color = Color.parseColor("#7A4820")
+                canvas.drawLine(cx, cy - u * 3.8f, cx, cy + u * 5f, paint)
+
+                // Left arm: fingering the neck — vibrato motion
+                val vib = kotlin.math.sin((tMed * 2f + seed * 2.5f).toDouble()).toFloat() * e * u * 0.5f
+                drawLimb(
+                    shoulderL, shoulderY,
+                    cx - u * 0.3f, cy - u * 0.5f,
+                    cx + u * 0.2f, cy + u * 0.6f - vib,
+                    armW, skinColor
+                )
+
+                // Right arm: bow across strings — visible sweep
+                val bowPhase = kotlin.math.sin((tMed * 0.9f + seed * 2.1f).toDouble()).toFloat()
+                val bowSwing = bowPhase * e * (u * 1f + e * u * 2f)
+                val eR_x = shoulderR + u * 1f
+                val eR_y = cy - u * 0.3f + bowSwing * 0.25f
+                val hR_x = cx + u * 1.5f
+                val hR_y = cy + u * 0.8f + bowSwing * 0.4f
+                drawLimb(shoulderR, shoulderY, eR_x, eR_y, hR_x, hR_y, armW, skinColor)
+
+                // Bow
+                paint.style = Paint.Style.STROKE
+                paint.strokeCap = Paint.Cap.ROUND
+                paint.strokeWidth = 1.2f
+                paint.color = Color.parseColor("#DDD0B5")
+                canvas.drawLine(
+                    cx - u * 1.8f, cy + u * 0.5f + bowSwing * 0.3f,
+                    cx + u * 2.2f, cy - u * 0.4f - bowSwing * 0.25f,
+                    paint
+                )
+            }
+
+            fun drawWoodwind(cx: Float, cy: Float, energy: Float, dress: Int, skinColor: Int, seed: Float) {
+                val e = if (active) energy.coerceIn(0f, 1f) else 0f
+                val torsoTop = cy - u * 4.5f
+                val shoulderY = cy - u * 2.2f
+                val shoulderL = cx - u * 1.1f
+                val shoulderR = cx + u * 1.1f
+
+                // Slight rhythmic lean
+                val lean = kotlin.math.sin((tSlow * 1.1f + seed).toDouble()).toFloat() * e * u * 0.3f
+                drawHead(cx + lean * 0.2f, torsoTop - headR * 1.12f, headR, skinColor)
+                drawTorso(cx + lean * 0.1f, torsoTop, bodyW * 0.95f, bodyH * 0.9f, dress)
+
+                // Clarinet: angled down from mouth
+                paint.style = Paint.Style.STROKE
+                paint.strokeCap = Paint.Cap.ROUND
+                paint.strokeWidth = u * 0.3f
+                paint.color = Color.parseColor("#1A1A1A")
+                val clTop_x = cx + u * 0.1f
+                val clTop_y = cy - u * 2.8f
+                val clBot_x = cx + u * 0.6f
+                val clBot_y = cy + u * 2.2f
+                canvas.drawLine(clTop_x, clTop_y, clBot_x, clBot_y, paint)
+                // Keys
+                paint.style = Paint.Style.FILL
+                paint.color = Color.parseColor("#C8A848")
+                for (k in 1..4) {
+                    val t = k / 5f
+                    val kx = clTop_x + (clBot_x - clTop_x) * t + u * 0.15f
+                    val ky = clTop_y + (clBot_y - clTop_y) * t
+                    canvas.drawCircle(kx, ky, u * 0.12f, paint)
+                }
+
+                // Finger movement: both hands flex on keys, reactive to treble
+                val fingerPhase = kotlin.math.sin((tMed * 1.6f + seed * 1.3f).toDouble()).toFloat()
+                val fingerMove = fingerPhase * e * u * 0.6f
+
+                // Left hand: upper half of instrument
+                drawLimb(
+                    shoulderL, shoulderY,
+                    cx - u * 0.5f, cy - u * 1.2f + fingerMove * 0.2f,
+                    cx + u * 0.15f, cy - u * 1.5f + fingerMove,
+                    armW, skinColor
+                )
+                // Right hand: lower half
+                drawLimb(
+                    shoulderR, shoulderY,
+                    cx + u * 0.6f, cy - u * 0.4f - fingerMove * 0.15f,
+                    cx + u * 0.4f, cy + u * 0.5f - fingerMove * 0.5f,
+                    armW, skinColor
+                )
+            }
+
+            fun drawHornPlayer(cx: Float, cy: Float, energy: Float, dress: Int, skinColor: Int, seed: Float) {
+                val e = if (active) energy.coerceIn(0f, 1f) else 0f
+                val torsoTop = cy - u * 4.5f
+                val shoulderY = cy - u * 2.2f
+                val shoulderL = cx - u * 1.1f
+                val shoulderR = cx + u * 1.1f
+                val headY = torsoTop - headR * 1.1f
+                val mouthY = headY + headR * 0.5f  // mouth is lower half of head
+
+                drawHead(cx, headY, headR, skinColor)
+                drawTorso(cx, torsoTop, bodyW * 0.97f, bodyH * 0.9f, dress)
+
+                // French horn: mouthpiece at face, bell at lap held by right hand
+                val bellCx = cx + u * 1.8f
+                val bellCy = cy + u * 0.2f
+                val bellR = u * 1.8f + e * u * 0.4f
+
+                // Tubing: from mouth → down to bell (drawn first, behind arms)
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = u * 0.22f
+                paint.color = Color.parseColor("#D4A84C")
+                val tubePath = android.graphics.Path()
+                tubePath.moveTo(cx + u * 0.6f, mouthY)  // mouthpiece at face
+                tubePath.quadTo(cx + u * 1.8f, cy - u * 1.5f, bellCx - bellR * 0.3f, bellCy - u * 0.5f)
+                canvas.drawPath(tubePath, paint)
+
+                // Mouthpiece nub at face
+                paint.style = Paint.Style.FILL
+                paint.color = Color.parseColor("#E0C050")
+                canvas.drawCircle(cx + u * 0.6f, mouthY, u * 0.18f, paint)
+
+                // Bell
+                paint.color = Color.parseColor("#C9952E")
+                canvas.drawCircle(bellCx, bellCy, bellR, paint)
+                // Dark inner bell
+                paint.color = Color.parseColor("#3A2A10")
+                canvas.drawCircle(bellCx + u * 0.2f, bellCy, bellR * 0.6f, paint)
+
+                // Left arm: valve hand on tubing — visible finger action
+                val valvePhase = kotlin.math.sin((tMed * 1.8f + seed * 1.4f).toDouble()).toFloat()
+                val valveMove = valvePhase * e * u * 0.5f
+                drawLimb(
+                    shoulderL, shoulderY,
+                    cx + u * 0.3f, cy - u * 0.8f + valveMove * 0.2f,
+                    cx + u * 0.8f, cy - u * 0.5f + valveMove,
+                    armW, skinColor
+                )
+                // Right arm: supports bell from below
+                drawLimb(
+                    shoulderR, shoulderY,
+                    cx + u * 1.4f, cy - u * 0.4f,
+                    bellCx - u * 0.3f, bellCy + u * 0.8f,
+                    armW, skinColor
+                )
+            }
+
+            fun drawConductor(cx: Float, cy: Float, skinColor: Int) {
+                val e = motion
+                val torsoTop = cy - u * 5.5f
+                val shoulderY = cy - u * 2.8f
+                val shoulderL = cx - u * 1.3f
+                val shoulderR = cx + u * 1.3f
+
+                val sway = kotlin.math.sin((tSlow * 0.7f).toDouble()).toFloat() * e * u * 0.4f
+                drawHead(cx + sway * 0.3f, torsoTop - headR * 1.15f, headR * 1.06f, skinColor)
+                drawTorso(cx + sway * 0.12f, torsoTop, bodyW * 1.1f, bodyH * 1.05f, Color.parseColor("#1A1F2A"))
+
+                // Conducting gesture: smooth figure-8 that grows with volume
+                val bx = kotlin.math.sin((tSlow * 1.1f).toDouble()).toFloat() * e * (u * 0.8f + e * u * 2.5f)
+                val by = kotlin.math.cos((tSlow * 2.2f).toDouble()).toFloat() * e * (u * 0.5f + e * u * 1.8f)
+
+                // Left arm: cue hand
+                drawLimb(
+                    shoulderL, shoulderY,
+                    shoulderL - u * 1f - bx * 0.2f, shoulderY + u * 1.2f - by * 0.25f,
+                    shoulderL - u * 1.8f - bx * 0.35f, shoulderY + u * 2.5f - by * 0.4f,
+                    armW * 1.05f, skinColor
+                )
+
+                // Right arm: baton
+                val bhX = shoulderR + u * 1.5f + bx * 0.4f
+                val bhY = shoulderY + u * 0.8f - by * 0.5f
+                drawLimb(
+                    shoulderR, shoulderY,
+                    shoulderR + u * 0.8f + bx * 0.2f, shoulderY + u * 0.4f - by * 0.3f,
+                    bhX, bhY,
+                    armW * 1.05f, skinColor
+                )
+                // Baton stick
+                paint.style = Paint.Style.STROKE
+                paint.strokeCap = Paint.Cap.ROUND
+                paint.strokeWidth = 1f
+                paint.color = Color.parseColor("#FFF3D6")
+                canvas.drawLine(bhX, bhY, bhX + u * 2f, bhY - u * 1.5f - by * 0.3f, paint)
+            }
+
+            // ═══ Place musicians — baroque close seating, edge-to-edge ═══
+            // 7 musicians packed tightly across the full frame width
+            // Slight Y offsets give depth (front/back row feel)
+            drawViolinist(w * 0.06f, stageCenterY + u * 0.3f, highMid, Color.parseColor("#24324A"), skinTones[0], 0f)
+            drawViolinist(w * 0.19f, stageCenterY + u * 1.0f, treble, Color.parseColor("#2D1F34"), skinTones[3], 1.3f)
+            drawCellist(w * 0.33f, stageCenterY + u * 1.8f, bass, Color.parseColor("#2A2434"), skinTones[5], 0.7f)
+            drawConductor(w * 0.50f, stageCenterY - u * 0.4f, skinTones[1])
+            drawWoodwind(w * 0.67f, stageCenterY + u * 0.6f, treble, Color.parseColor("#213247"), skinTones[4], 2.1f)
+            drawHornPlayer(w * 0.81f, stageCenterY + u * 1.4f, lowMid, Color.parseColor("#342521"), skinTones[6], 3.4f)
+            drawCellist(w * 0.94f, stageCenterY + u * 2.0f, bass * 0.8f + lowMid * 0.2f, Color.parseColor("#2B1F22"), skinTones[2], 4.0f)
+        }
+
+        private fun drawPulseRing(canvas: Canvas, w: Float, h: Float) {
+            val cx = w / 2f
+            val cy = h / 2f
+            val maxR = minOf(w, h) * 0.45f
+            val avgLevel = bandEnergy(0, barCount - 1)
+            val bass = bandEnergy(0, 5)
+            val innerRadius = maxR * (0.16f + avgLevel * 0.12f)
+
+            paint.style = Paint.Style.STROKE
+            paint.strokeCap = Paint.Cap.ROUND
+            for (i in 0 until barCount) {
+                val pos = i.toFloat() / (barCount - 1).coerceAtLeast(1)
+                val sample = measuredAudioAt(pos, lowCut = 0.76f, highBoost = 1.24f)
+                val angle = (i.toFloat() / barCount) * 360f
+                val spokeLength = maxR * (0.15f + sample * 1.25f)
+                val rad = Math.toRadians(angle.toDouble())
+                val x1 = cx + innerRadius * kotlin.math.cos(rad).toFloat()
+                val y1 = cy + innerRadius * kotlin.math.sin(rad).toFloat()
+                val x2 = cx + (innerRadius + spokeLength) * kotlin.math.cos(rad).toFloat()
+                val y2 = cy + (innerRadius + spokeLength) * kotlin.math.sin(rad).toFloat()
+                paint.strokeWidth = 2.2f + sample * 4.8f
+                paint.color = neonColors[i % neonColors.size]
+                paint.alpha = (90 + sample * 165).toInt().coerceIn(90, 255)
+                paint.setShadowLayer(12f + sample * 12f, 0f, 0f, paint.color)
+                canvas.drawLine(x1, y1, x2, y2, paint)
+
+                paint.style = Paint.Style.FILL
+                paint.alpha = (110 + sample * 120).toInt().coerceIn(90, 255)
+                canvas.drawCircle(x2, y2, 3.2f + sample * 6.6f, paint)
+                paint.style = Paint.Style.STROKE
+            }
+
+            paint.setShadowLayer(0f, 0f, 0f, 0)
+            paint.style = Paint.Style.STROKE
+            paint.color = Color.parseColor("#FFFFFF")
+            paint.strokeWidth = 2.5f + avgLevel * 2.6f
+            paint.alpha = 85
+            canvas.drawCircle(cx, cy, innerRadius * (1.0f + bass * 0.18f), paint)
+            paint.color = Color.parseColor("#FF4DFF")
+            paint.alpha = 60
+            paint.strokeWidth = 1.6f + avgLevel * 2.2f
+            canvas.drawCircle(cx, cy, innerRadius + maxR * (0.22f + avgLevel * 0.1f), paint)
+        }
+
+        private fun drawSpectrum(canvas: Canvas, w: Float, h: Float) {
+            val gap = 1f
+            val barWidth = (w - gap * (barCount - 1)) / barCount
+            paint.style = Paint.Style.FILL
+            for (i in 0 until barCount) {
+                val barH = barHeights[i] * h * 0.9f
+                val x = i * (barWidth + gap)
+                // Gradient across spectrum
+                val fraction = i.toFloat() / barCount
+                val colorIdx = (fraction * (spectrumColors.size - 1)).toInt()
+                    .coerceIn(0, spectrumColors.size - 2)
+                val mix = (fraction * (spectrumColors.size - 1)) - colorIdx
+                paint.color = blendColors(spectrumColors[colorIdx], spectrumColors[colorIdx + 1], mix)
+                paint.alpha = (barHeights[i] * 230).toInt().coerceIn(100, 230)
+                paint.setShadowLayer(3f, 0f, 0f, paint.color)
+                // Mirror: bars grow from center
+                val halfBar = barH / 2f
+                val cy = h / 2f
+                canvas.drawRoundRect(x, cy - halfBar, x + barWidth, cy + halfBar, 2f, 2f, paint)
+            }
+            paint.setShadowLayer(0f, 0f, 0f, 0)
+        }
+
+        /**
+         * Meditative theme: slow-breathing concentric rings that expand and
+         * contract gently, overlaid with drifting luminous particles.
+         * Calm indigo / lavender / soft gold palette.
+         */
+        private fun drawMeditative(canvas: Canvas, w: Float, h: Float) {
+            val cx = w / 2f
+            val cy = h / 2f
+            val maxR = minOf(w, h) * 0.48f
+            val breathPhase = (frameCount % 180) / 180f
+            val breath = (kotlin.math.sin(breathPhase * Math.PI * 2).toFloat() + 1f) / 2f
+            val avgLevel = bandEnergy(0, barCount - 1)
+            val bass = bandEnergy(0, 6)
+            val mid = bandEnergy(8, 18)
+            val treble = bandEnergy(20, 31)
+
+            paint.style = Paint.Style.STROKE
+            val ringCount = 5
+            for (r in 0 until ringCount) {
+                val baseR = maxR * (0.18f + r * 0.16f)
+                val phase = (frameCount % 180 + r * 30) / 180f
+                val ringBreath = (kotlin.math.sin(phase * Math.PI * 2).toFloat() + 1f) / 2f
+                val ringAudio = measuredAudioAt((0.14f + r.toFloat() / ringCount * 0.72f).coerceIn(0f, 1f), lowCut = 0.9f, highBoost = 1.18f)
+                val radius = baseR + ringBreath * maxR * 0.06f + ringAudio * maxR * 0.13f
+                paint.strokeWidth = 1.4f + ringBreath * 1.2f + ringAudio * 3.4f
+                val alpha = (55 + ringBreath * 50 + ringAudio * 90).toInt().coerceIn(55, 220)
+                val color = blendColors(
+                    Color.parseColor("#4B0082"),
+                    Color.parseColor("#B794F4"),
+                    (ringBreath * 0.45f + ringAudio * 0.55f).coerceIn(0f, 1f)
+                )
+                paint.color = color
+                paint.alpha = alpha
+                canvas.drawCircle(cx, cy, radius, paint)
+            }
+
+            paint.style = Paint.Style.FILL
+            val particleColors = intArrayOf(
+                Color.parseColor("#7B68EE"),
+                Color.parseColor("#DDA0DD"),
+                Color.parseColor("#FFD700"),
+                Color.parseColor("#E6E6FA"),
+                Color.parseColor("#87CEEB")
+            )
+            for (i in 0 until minOf(barCount, 18)) {
+                val sample = measuredAudioAt(i.toFloat() / (barCount - 1).coerceAtLeast(1), lowCut = 0.9f, highBoost = 1.2f)
+                val angle = (i * 20f + frameCount * (0.16f + sample * 0.5f)) % 360f
+                val dist = maxR * (0.12f + sample * 0.74f) + breath * maxR * 0.05f
+                val rad = Math.toRadians(angle.toDouble())
+                val px = cx + dist * kotlin.math.cos(rad).toFloat()
+                val py = cy + dist * kotlin.math.sin(rad).toFloat()
+                val size = 2.4f + sample * 7.2f
+                paint.color = particleColors[i % particleColors.size]
+                paint.alpha = (85 + sample * 155).toInt().coerceIn(60, 235)
+                canvas.drawCircle(px, py, size, paint)
+                paint.alpha = (paint.alpha * 0.28f).toInt().coerceIn(20, 100)
+                canvas.drawCircle(px, py, size * 3.2f, paint)
+            }
+
+            paint.style = Paint.Style.FILL
+            val orbR = 8f + breath * 5f + avgLevel * 13f
+            paint.color = Color.parseColor("#DDA0DD")
+            paint.alpha = (105 + breath * 55 + mid * 70).toInt().coerceIn(90, 240)
+            canvas.drawCircle(cx, cy, orbR * (2.6f + bass * 0.5f), paint)
+            paint.color = Color.parseColor("#FFD9FF")
+            paint.alpha = (170 + avgLevel * 65 + treble * 30).toInt().coerceIn(150, 255)
+            canvas.drawCircle(cx, cy, orbR * (1f + treble * 0.12f), paint)
+        }
+
+        /**
+         * TRON (1982) Theme — Retro neon grid with light cycle wall made of
+         * spectrum-analyzer bricks, Bit companion as tweeter visualizer, and
+         * a Recognizer hovering in the background. Authentic 80s film aesthetic
+         * with cyan/orange neon glow on pure black.
+         */
+        /**
+         * TRON (1982) Theme — The Grid comes alive with music.
+         *
+         * Immersive neon world: perspective grid floor, two light cycles
+         * racing and leaving spectrum-analyzer trail walls, a Recognizer
+         * patrolling overhead with bass-reactive searchlight, Tron programs
+         * throwing identity discs that orbit with treble energy, and Bit
+         * companion morphing between YES/NO states.
+         *
+         * Every visual element is driven by audio frequency bands.
+         * When silent, the Grid goes dark — only dim outlines remain.
+         */
+        private fun drawTron(canvas: Canvas, w: Float, h: Float) {
+            val cx = w / 2f
+            val cy = h / 2f
+            val t = frameCount * 0.035f
+            val bass = bandEnergy(0, 5)
+            val lowMid = bandEnergy(6, 13)
+            val highMid = bandEnergy(14, 22)
+            val treble = bandEnergy(23, 31)
+            val avg = bandEnergy(0, barCount - 1)
+            val active = avg > 0.03f
+
+            val cyan = Color.parseColor("#00DFFF")
+            val cyanDim = Color.parseColor("#004466")
+            val orange = Color.parseColor("#FF6A00")
+            val orangeDim = Color.parseColor("#662A00")
+            val white = Color.WHITE
+
+            // ── Void background with subtle bass pulse ──
+            paint.style = Paint.Style.FILL
+            val bgPulse = if (active) (bass * 12f).toInt().coerceIn(0, 15) else 0
+            paint.color = Color.rgb(bgPulse, bgPulse / 2, bgPulse)
+            canvas.drawRect(0f, 0f, w, h, paint)
+
+            // ── PERSPECTIVE GRID FLOOR ──
+            // Grid lines pulse with bass — the floor itself becomes a visualizer
+            val horizon = h * 0.38f
+            val vanishX = cx
+            paint.style = Paint.Style.STROKE
+
+            // Horizontal grid lines with bass-reactive wave distortion
+            val hLines = 16
+            for (i in 1..hLines) {
+                val prog = i.toFloat() / hLines
+                val yBase = horizon + (h - horizon) * prog
+                val squeeze = prog  // 0 at horizon, 1 at bottom
+                val halfW = w * 0.58f * squeeze
+                val leftX = vanishX - halfW
+                val rightX = vanishX + halfW
+
+                // Bass makes grid lines wave
+                val wave = if (active) bass * 3f * kotlin.math.sin((prog * 8f + t * 1.2f).toDouble()).toFloat() else 0f
+                paint.strokeWidth = 0.5f + prog * 0.8f
+                paint.color = cyan
+                paint.alpha = (10 + 50 * prog * (0.3f + avg * 0.7f)).toInt().coerceIn(0, 80)
+                paint.setShadowLayer(2f * prog + bass * 3f * prog, 0f, 0f, cyanDim)
+                canvas.drawLine(leftX, yBase + wave, rightX, yBase - wave * 0.5f, paint)
+            }
+
+            // Vertical converging lines — treble energy makes them brighter
+            val vLines = 18
+            for (i in -vLines / 2..vLines / 2) {
+                val botX = cx + i * w * 0.072f
+                val brightness = (1f - kotlin.math.abs(i.toFloat()) / (vLines / 2f))
+                paint.strokeWidth = 0.4f + brightness * 0.4f
+                paint.color = cyan
+                paint.alpha = (8 + 25 * brightness * (0.2f + treble * 0.8f)).toInt().coerceIn(0, 55)
+                paint.setShadowLayer(1f, 0f, 0f, cyanDim)
+                canvas.drawLine(vanishX + i * 0.8f, horizon, botX, h, paint)
+            }
+            paint.setShadowLayer(0f, 0f, 0f, 0)
+
+            // ── MCP CONE — rotating wall of colored blocks (Tron arcade game) ──
+            // A conical shield of colored bricks that rotate slowly. Each brick
+            // is an audio bin — lit bricks pulse with frequency energy, creating
+            // a Breakout-style spectrum visualizer shaped like the MCP cone.
+            val mcpCx = cx + w * 0.18f
+            val mcpTopY = h * 0.02f
+            val mcpBotY = h * 0.38f
+            val mcpH = mcpBotY - mcpTopY
+            val mcpRows = 10
+            val mcpColsPerRow = 12
+            val mcpRotation = t * 0.4f  // slow rotation
+
+            // MCP face glow at apex (the humanoid face in the cone)
+            paint.style = Paint.Style.FILL
+            paint.color = Color.parseColor("#FF2200")
+            paint.alpha = (40 + avg * 80).toInt().coerceIn(40, 120)
+            paint.setShadowLayer(12f + avg * 10f, 0f, 0f, Color.parseColor("#FF2200"))
+            canvas.drawCircle(mcpCx, mcpTopY + mcpH * 0.08f, h * 0.035f + avg * h * 0.015f, paint)
+
+            // Draw the cone blocks — rows get wider toward the bottom (cone shape)
+            val mcpBlockColors = intArrayOf(
+                Color.parseColor("#FF0040"), Color.parseColor("#FF6600"),
+                Color.parseColor("#FFCC00"), Color.parseColor("#00FF66"),
+                Color.parseColor("#00CCFF"), Color.parseColor("#6644FF"),
+                Color.parseColor("#FF00CC"), Color.parseColor("#FF4400"),
+                Color.parseColor("#44FFAA"), Color.parseColor("#FF8800")
+            )
+
+            for (row in 0 until mcpRows) {
+                val rowProg = (row + 1f) / mcpRows
+                val rowY = mcpTopY + mcpH * rowProg
+                val rowHalfW = w * 0.04f + w * 0.22f * rowProg  // widens toward bottom
+                val brickH = mcpH / mcpRows * 0.85f
+                val brickW = (rowHalfW * 2f) / mcpColsPerRow * 0.9f
+
+                for (col in 0 until mcpColsPerRow) {
+                    // Rotate column index for spinning effect
+                    val rotatedCol = ((col + (mcpRotation * mcpColsPerRow / (2f * Math.PI.toFloat())).toInt()) % mcpColsPerRow + mcpColsPerRow) % mcpColsPerRow
+                    val colProg = (col.toFloat() / mcpColsPerRow) - 0.5f
+                    val bx = mcpCx + colProg * rowHalfW * 2f
+
+                    // Map to audio bin
+                    val binIdx = ((row * mcpColsPerRow + rotatedCol) * barCount / (mcpRows * mcpColsPerRow)).coerceIn(0, barCount - 1)
+                    val energy = barHeights[binIdx]
+
+                    if (energy > 0.08f) {
+                        // Lit block — color from palette, brightness from energy
+                        paint.style = Paint.Style.FILL
+                        paint.color = mcpBlockColors[row % mcpBlockColors.size]
+                        paint.alpha = (80 + energy * 175).toInt().coerceIn(80, 255)
+                        paint.setShadowLayer(2f + energy * 5f, 0f, 0f, mcpBlockColors[row % mcpBlockColors.size])
+                        canvas.drawRect(bx, rowY - brickH, bx + brickW, rowY, paint)
+                    } else {
+                        // Dim outline block
+                        paint.style = Paint.Style.STROKE
+                        paint.strokeWidth = 0.4f
+                        paint.color = Color.parseColor("#220808")
+                        paint.alpha = 30
+                        paint.setShadowLayer(0f, 0f, 0f, 0)
+                        canvas.drawRect(bx, rowY - brickH, bx + brickW, rowY, paint)
+                    }
+                }
+            }
+
+            // Red glow base of MCP cone
+            paint.style = Paint.Style.FILL
+            paint.color = Color.parseColor("#FF2200")
+            paint.alpha = (15 + bass * 30).toInt().coerceIn(15, 45)
+            paint.setShadowLayer(8f, 0f, 0f, Color.parseColor("#FF2200"))
+            canvas.drawRect(mcpCx - w * 0.24f, mcpBotY, mcpCx + w * 0.24f, mcpBotY + 2f, paint)
+            paint.setShadowLayer(0f, 0f, 0f, 0)
+
+            // ── LIGHT CYCLES — two cycles racing, leaving spectrum walls ──
+
+            // Cyan cycle (left side) — position scrolls with time
+            val cycle1X = (w * 0.15f + ((t * 12f) % (w * 0.35f))).coerceIn(w * 0.05f, w * 0.48f)
+            val cycle1Y = h * 0.78f
+            val cycleH = h * 0.045f
+
+            fun drawLightCycle(px: Float, py: Float, color: Int, dimColor: Int, facing: Float) {
+                val cw = cycleH * 2.2f
+                val ch = cycleH
+                // Cycle body — sleek wedge
+                paint.style = Paint.Style.FILL
+                paint.color = Color.parseColor("#0A0A14")
+                val cp = android.graphics.Path()
+                cp.moveTo(px + cw * 0.6f * facing, py)
+                cp.lineTo(px + cw * 0.1f * facing, py - ch * 0.7f)
+                cp.lineTo(px - cw * 0.5f * facing, py - ch * 0.3f)
+                cp.lineTo(px - cw * 0.5f * facing, py + ch * 0.15f)
+                cp.close()
+                canvas.drawPath(cp, paint)
+                // Neon circuit lines on cycle
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 1.2f
+                paint.color = color
+                paint.alpha = (160 + avg * 80).toInt().coerceIn(160, 240)
+                paint.setShadowLayer(5f, 0f, 0f, color)
+                canvas.drawPath(cp, paint)
+                // Wheel glow
+                paint.style = Paint.Style.FILL
+                paint.color = color
+                paint.alpha = (180 + avg * 75).toInt().coerceIn(180, 255)
+                canvas.drawCircle(px + cw * 0.35f * facing, py, ch * 0.2f, paint)
+                canvas.drawCircle(px - cw * 0.35f * facing, py, ch * 0.18f, paint)
+                paint.setShadowLayer(0f, 0f, 0f, 0)
+            }
+
+            drawLightCycle(cycle1X, cycle1Y, cyan, cyanDim, 1f)
+
+            // Orange cycle (right side, going opposite direction)
+            val cycle2X = (w * 0.85f - ((t * 10f) % (w * 0.35f))).coerceIn(w * 0.52f, w * 0.95f)
+            val cycle2Y = h * 0.82f
+            drawLightCycle(cycle2X, cycle2Y, orange, orangeDim, -1f)
+
+            // ── LIGHT CYCLE TRAIL WALLS (spectrum analyzer) ──
+            // Cyan trail wall — behind cyan cycle
+            val wallCols = 16
+            val trailH = h * 0.28f
+            val trailBot = cycle1Y + cycleH * 0.15f
+            val trailTop = trailBot - trailH
+            val trailLeft = w * 0.02f
+            val trailRight = cycle1X - cycleH
+            if (trailRight > trailLeft + 5f) {
+                val colW = (trailRight - trailLeft) / wallCols
+                val brickRows = 8
+                val brickH = trailH / brickRows
+                for (col in 0 until wallCols) {
+                    val binIdx = (col * barCount / wallCols).coerceIn(0, barCount - 1)
+                    val energy = barHeights[binIdx]
+                    val litRows = (energy * brickRows).toInt().coerceIn(0, brickRows)
+                    val bx = trailLeft + col * colW
+
+                    for (row in 0 until brickRows) {
+                        val by = trailBot - (row + 1) * brickH
+                        if (row < litRows) {
+                            val rowRatio = row.toFloat() / brickRows
+                            paint.style = Paint.Style.FILL
+                            paint.color = when {
+                                rowRatio < 0.4f -> cyan
+                                rowRatio < 0.75f -> Color.parseColor("#55EEFF")
+                                else -> white
+                            }
+                            paint.alpha = (100 + energy * 155).toInt().coerceIn(100, 255)
+                            paint.setShadowLayer(2f + energy * 4f, 0f, 0f, cyan)
+                            canvas.drawRect(bx + 0.5f, by + 0.5f, bx + colW - 0.5f, by + brickH - 0.5f, paint)
+                        } else {
+                            paint.style = Paint.Style.STROKE
+                            paint.strokeWidth = 0.3f
+                            paint.color = cyanDim
+                            paint.alpha = 12
+                            paint.setShadowLayer(0f, 0f, 0f, 0)
+                            canvas.drawRect(bx + 0.5f, by + 0.5f, bx + colW - 0.5f, by + brickH - 0.5f, paint)
+                        }
+                    }
+                }
+            }
+            paint.setShadowLayer(0f, 0f, 0f, 0)
+
+            // Orange trail wall — behind orange cycle
+            val trailBot2 = cycle2Y + cycleH * 0.15f
+            val trailTop2 = trailBot2 - trailH * 0.9f
+            val trailLeft2 = cycle2X + cycleH
+            val trailRight2 = w * 0.98f
+            if (trailRight2 > trailLeft2 + 5f) {
+                val colW2 = (trailRight2 - trailLeft2) / wallCols
+                val brickRows2 = 8
+                val brickH2 = (trailBot2 - trailTop2) / brickRows2
+                for (col in 0 until wallCols) {
+                    val binIdx = ((wallCols - 1 - col) * barCount / wallCols).coerceIn(0, barCount - 1)
+                    val energy = barHeights[binIdx]
+                    val litRows = (energy * brickRows2).toInt().coerceIn(0, brickRows2)
+                    val bx = trailLeft2 + col * colW2
+
+                    for (row in 0 until brickRows2) {
+                        val by = trailBot2 - (row + 1) * brickH2
+                        if (row < litRows) {
+                            val rowRatio = row.toFloat() / brickRows2
+                            paint.style = Paint.Style.FILL
+                            paint.color = when {
+                                rowRatio < 0.4f -> orange
+                                rowRatio < 0.75f -> Color.parseColor("#FFB855")
+                                else -> white
+                            }
+                            paint.alpha = (100 + energy * 155).toInt().coerceIn(100, 255)
+                            paint.setShadowLayer(2f + energy * 4f, 0f, 0f, orange)
+                            canvas.drawRect(bx + 0.5f, by + 0.5f, bx + colW2 - 0.5f, by + brickH2 - 0.5f, paint)
+                        } else {
+                            paint.style = Paint.Style.STROKE
+                            paint.strokeWidth = 0.3f
+                            paint.color = orangeDim
+                            paint.alpha = 12
+                            paint.setShadowLayer(0f, 0f, 0f, 0)
+                            canvas.drawRect(bx + 0.5f, by + 0.5f, bx + colW2 - 0.5f, by + brickH2 - 0.5f, paint)
+                        }
+                    }
+                }
+            }
+            paint.setShadowLayer(0f, 0f, 0f, 0)
+
+            // Neon trail lines at base of walls
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 2f
+            paint.color = cyan
+            paint.alpha = (100 + avg * 120).toInt().coerceIn(100, 220)
+            paint.setShadowLayer(6f, 0f, 0f, cyan)
+            canvas.drawLine(trailLeft, trailBot, cycle1X - cycleH * 0.5f, trailBot, paint)
+            paint.color = orange
+            paint.setShadowLayer(6f, 0f, 0f, orange)
+            canvas.drawLine(cycle2X + cycleH * 0.5f, trailBot2, trailRight2, trailBot2, paint)
+            paint.setShadowLayer(0f, 0f, 0f, 0)
+
+            // ── TRON PROGRAMS with IDENTITY DISCS (throw & return) ──
+            // Discs fly out toward the opponent and boomerang back.
+            // Throw distance scales with energy; disc spins as it travels.
+
+            fun drawProgram(px: Float, py: Float, color: Int, throwDir: Float,
+                            throwPhase: Float, discEnergy: Float) {
+                val u = h * 0.012f
+                val headY = py - u * 8f
+                // Helmet
+                paint.style = Paint.Style.FILL
+                paint.color = Color.parseColor("#0A0A14")
+                canvas.drawCircle(px, headY, u * 2f, paint)
+                // Visor glow
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 1.2f
+                paint.color = color
+                paint.alpha = (120 + discEnergy * 120).toInt().coerceIn(120, 240)
+                paint.setShadowLayer(4f, 0f, 0f, color)
+                canvas.drawArc(
+                    px - u * 1.8f, headY - u * 0.8f,
+                    px + u * 1.8f, headY + u * 1f,
+                    200f, 140f, false, paint
+                )
+                // Body
+                paint.style = Paint.Style.FILL
+                paint.color = Color.parseColor("#080812")
+                val body = android.graphics.Path()
+                body.moveTo(px, headY + u * 1.5f)
+                body.lineTo(px - u * 2.5f, py - u * 2f)
+                body.lineTo(px - u * 2f, py + u * 2f)
+                body.lineTo(px + u * 2f, py + u * 2f)
+                body.lineTo(px + u * 2.5f, py - u * 2f)
+                body.close()
+                canvas.drawPath(body, paint)
+                // Circuit lines
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 0.9f
+                paint.color = color
+                paint.alpha = (60 + discEnergy * 100).toInt().coerceIn(60, 180)
+                paint.setShadowLayer(3f, 0f, 0f, color)
+                canvas.drawPath(body, paint)
+                canvas.drawLine(px, headY + u * 2f, px, py + u * 1f, paint)
+                canvas.drawLine(px - u * 1.5f, py - u * 1.5f, px + u * 1.5f, py - u * 1.5f, paint)
+
+                // ── Identity disc: throw and return boomerang ──
+                // throwPhase cycles 0→2π. 0→π = flying out, π→2π = returning.
+                // Use a sine curve so the disc smoothly arcs outward and back.
+                val phase = throwPhase % (2f * Math.PI.toFloat())
+                val outFraction = kotlin.math.sin(phase.toDouble()).toFloat().coerceIn(0f, 1f)
+                // Max throw distance scales with energy
+                val maxDist = w * 0.18f + discEnergy * w * 0.12f
+                val throwDist = outFraction * maxDist
+                // Disc arcs upward in parabola as it flies
+                val arcHeight = outFraction * (1f - outFraction) * h * 0.15f
+
+                val discX = px + throwDir * throwDist
+                val discY = py - u * 4f - arcHeight
+                val discR = u * 1.4f + discEnergy * u * 0.6f
+                val discSpin = t * 12f  // fast spin
+
+                // Disc trail — fading line from hand to disc position
+                if (throwDist > u * 2f && discEnergy > 0.05f) {
+                    paint.style = Paint.Style.STROKE
+                    paint.strokeWidth = 1f
+                    paint.color = color
+                    paint.alpha = (discEnergy * 60 * outFraction).toInt().coerceIn(0, 80)
+                    paint.setShadowLayer(4f, 0f, 0f, color)
+                    val trailPath = android.graphics.Path()
+                    trailPath.moveTo(px + throwDir * u * 2f, py - u * 4f)
+                    trailPath.quadTo(
+                        px + throwDir * throwDist * 0.5f, discY - arcHeight * 0.3f,
+                        discX, discY
+                    )
+                    canvas.drawPath(trailPath, paint)
+                }
+
+                // Disc glow
+                paint.style = Paint.Style.FILL
+                paint.color = color
+                paint.alpha = (30 + discEnergy * 60).toInt().coerceIn(30, 90)
+                paint.setShadowLayer(discR * 2.5f, 0f, 0f, color)
+                canvas.drawCircle(discX, discY, discR * 2f, paint)
+
+                // Disc body (rotated ring appearance via two concentric circles)
+                paint.color = Color.parseColor("#E0E8F0")
+                paint.alpha = (190 + discEnergy * 65).toInt().coerceIn(190, 255)
+                paint.setShadowLayer(6f + discEnergy * 8f, 0f, 0f, color)
+                canvas.drawCircle(discX, discY, discR, paint)
+                // Inner ring
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 1f
+                paint.color = color
+                paint.alpha = (200 + discEnergy * 55).toInt().coerceIn(200, 255)
+                canvas.drawCircle(discX, discY, discR * 0.6f, paint)
+                // Spinning cross-hair on disc
+                paint.strokeWidth = 0.6f
+                paint.alpha = (150 + discEnergy * 80).toInt().coerceIn(150, 230)
+                val cs = kotlin.math.cos(discSpin.toDouble()).toFloat()
+                val sn = kotlin.math.sin(discSpin.toDouble()).toFloat()
+                canvas.drawLine(discX - cs * discR * 0.5f, discY - sn * discR * 0.5f,
+                    discX + cs * discR * 0.5f, discY + sn * discR * 0.5f, paint)
+                canvas.drawLine(discX + sn * discR * 0.5f, discY - cs * discR * 0.5f,
+                    discX - sn * discR * 0.5f, discY + cs * discR * 0.5f, paint)
+                paint.setShadowLayer(0f, 0f, 0f, 0)
+            }
+
+            // Cyan program — throws disc rightward toward orange
+            val prog1Phase = t * 1.8f + highMid * 2f
+            drawProgram(cx - w * 0.14f, h * 0.58f, cyan, 1f, prog1Phase, highMid)
+
+            // Orange program — throws disc leftward toward cyan
+            val prog2Phase = t * 1.5f + lowMid * 2f + Math.PI.toFloat() // offset so throws alternate
+            drawProgram(cx + w * 0.14f, h * 0.60f, orange, -1f, prog2Phase, lowMid)
+
+            // ── BIT COMPANION ──
+            // Floats near top-left, morphs YES(spiky yellow)/NO(angular red)/neutral(cyan)
+            val bitCx = w * 0.08f
+            val bitCy = h * 0.20f
+            val bitBaseR = h * 0.05f
+            val bitR = bitBaseR * (0.7f + treble * 0.8f)
+            val bitBob = kotlin.math.sin((t * 1.5f).toDouble()).toFloat() * h * 0.012f
+            val bitSpin = t * 2.5f
+
+            val bitColor = when {
+                treble > 0.55f -> Color.parseColor("#FFEE00") // YES — excited
+                treble < 0.12f -> Color.parseColor("#FF2200") // NO — quiet
+                else -> cyan
+            }
+            val vertices = when {
+                treble > 0.55f -> 12  // spiky star
+                treble < 0.12f -> 4   // angular diamond
+                else -> 8             // octagon
+            }
+            val spike = if (treble > 0.55f) 0.6f else if (treble < 0.12f) 0.3f else 0.1f
+
+            // Glow
+            paint.style = Paint.Style.FILL
+            paint.color = bitColor
+            paint.alpha = (20 + treble * 50).toInt().coerceIn(20, 70)
+            paint.setShadowLayer(bitR * 1.8f, 0f, 0f, bitColor)
+            canvas.drawCircle(bitCx, bitCy + bitBob, bitR * 1.8f, paint)
+
+            // Body
+            val bitPath = android.graphics.Path()
+            for (v in 0 until vertices) {
+                val angle = (v.toFloat() / vertices) * Math.PI.toFloat() * 2f + bitSpin
+                val isOuter = v % 2 == 0
+                val vr = if (isOuter) bitR * (1f + spike) else bitR * (0.6f + spike * 0.2f)
+                val vx = bitCx + kotlin.math.cos(angle.toDouble()).toFloat() * vr
+                val vy = bitCy + bitBob + kotlin.math.sin(angle.toDouble()).toFloat() * vr
+                if (v == 0) bitPath.moveTo(vx, vy) else bitPath.lineTo(vx, vy)
+            }
+            bitPath.close()
+
+            paint.style = Paint.Style.FILL
+            paint.color = bitColor
+            paint.alpha = (100 + treble * 140).toInt().coerceIn(100, 240)
+            paint.setShadowLayer(5f, 0f, 0f, bitColor)
+            canvas.drawPath(bitPath, paint)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1.2f
+            paint.color = white
+            paint.alpha = (160 + treble * 80).toInt().coerceIn(160, 240)
+            canvas.drawPath(bitPath, paint)
+
+            // Bit eye
+            paint.style = Paint.Style.FILL
+            paint.color = white
+            paint.alpha = (200 + treble * 55).toInt().coerceIn(200, 255)
+            canvas.drawCircle(bitCx, bitCy + bitBob, bitBaseR * 0.18f, paint)
+            paint.setShadowLayer(0f, 0f, 0f, 0)
+
+            // ── HUD overlay ──
+            paint.style = Paint.Style.FILL
+            paint.typeface = android.graphics.Typeface.MONOSPACE
+            paint.textSize = h * 0.028f
+            paint.textAlign = Paint.Align.LEFT
+            paint.color = cyan
+            paint.alpha = (40 + avg * 50).toInt().coerceIn(40, 90)
+            canvas.drawText("END OF LINE", 4f, h - 4f, paint)
+            paint.textAlign = Paint.Align.RIGHT
+            paint.color = orange
+            paint.alpha = (40 + avg * 50).toInt().coerceIn(40, 90)
+            canvas.drawText("GRID %04d".format((frameCount % 10000).toInt()), w - 4f, h - 4f, paint)
+            paint.typeface = android.graphics.Typeface.DEFAULT
+        }
+
+        private fun drawBreathe(canvas: Canvas, w: Float, h: Float) {
+            val cx = w / 2f
+            val cy = h / 2f
+            val maxR = minOf(w, h) * 0.45f
+
+            // Advance breathing timer
+            val now = System.currentTimeMillis()
+            if (lastBreathFrameTime > 0) {
+                breathCycleMs = (breathCycleMs + (now - lastBreathFrameTime)) % breathTotalMs
+            }
+            lastBreathFrameTime = now
+
+            // Determine phase and progress (0..1) within that phase
+            val elapsed = breathCycleMs
+            val (phase, progress) = when {
+                elapsed < breathInhaleMs -> "INHALE" to (elapsed.toFloat() / breathInhaleMs)
+                elapsed < breathInhaleMs + breathHoldMs -> "HOLD" to ((elapsed - breathInhaleMs).toFloat() / breathHoldMs)
+                elapsed < breathInhaleMs + breathHoldMs + breathExhaleMs -> "EXHALE" to ((elapsed - breathInhaleMs - breathHoldMs).toFloat() / breathExhaleMs)
+                else -> "REST" to ((elapsed - breathInhaleMs - breathHoldMs - breathExhaleMs).toFloat() / breathPauseMs)
+            }
+
+            // Circle size based on breath phase — expands on inhale, shrinks on exhale
+            val breathSize = when (phase) {
+                "INHALE" -> 0.3f + progress * 0.7f       // grows 0.3 → 1.0
+                "HOLD"   -> 1.0f                          // full
+                "EXHALE" -> 1.0f - progress * 0.7f        // shrinks 1.0 → 0.3
+                else     -> 0.3f                           // resting small
+            }
+
+            // Use average audio level from barHeights to tint the color
+            val avgLevel = barHeights.average().toFloat().coerceIn(0f, 1f)
+
+            // Color palette: quiet → deep teal, loud → warm amber/coral
+            val quietColor = Color.parseColor("#2E8B8B")   // teal
+            val midColor = Color.parseColor("#5B9EA6")      // lighter teal
+            val warmColor = Color.parseColor("#E8A87C")     // peach
+            val hotColor = Color.parseColor("#D4726A")       // coral
+            val baseColor = when {
+                avgLevel < 0.33f -> blendColors(quietColor, midColor, avgLevel / 0.33f)
+                avgLevel < 0.66f -> blendColors(midColor, warmColor, (avgLevel - 0.33f) / 0.33f)
+                else -> blendColors(warmColor, hotColor, (avgLevel - 0.66f) / 0.34f)
+            }
+
+            // Outer soft glow
+            val radius = maxR * breathSize
+            paint.style = Paint.Style.FILL
+            paint.color = baseColor
+            paint.alpha = (40 + avgLevel * 50).toInt()
+            paint.setShadowLayer(8f, 0f, 0f, baseColor)
+            canvas.drawCircle(cx, cy, radius * 1.4f, paint)
+
+            // Main breathing circle
+            paint.alpha = (85 + avgLevel * 85).toInt()
+            paint.setShadowLayer(6f, 0f, 0f, baseColor)
+            canvas.drawCircle(cx, cy, radius, paint)
+
+            // Inner bright core
+            val coreColor = blendColors(baseColor, Color.WHITE, 0.45f)
+            paint.color = coreColor
+            paint.alpha = (130 + avgLevel * 110).toInt().coerceAtMost(240)
+            paint.setShadowLayer(4f, 0f, 0f, Color.WHITE)
+            canvas.drawCircle(cx, cy, radius * 0.5f, paint)
+            paint.setShadowLayer(0f, 0f, 0f, 0)
+
+            // Breathing guide text
+            val label = when (phase) {
+                "INHALE" -> "breathe in"
+                "HOLD"   -> "hold"
+                "EXHALE" -> "breathe out"
+                else     -> "rest"
+            }
+            paint.color = Color.WHITE
+            paint.alpha = 200
+            paint.textSize = 14f * (w / 400f).coerceIn(0.8f, 1.5f)
+            paint.textAlign = Paint.Align.CENTER
+            paint.style = Paint.Style.FILL
+            paint.setShadowLayer(4f, 0f, 0f, baseColor)
+            canvas.drawText(label, cx, cy + radius + paint.textSize * 1.6f, paint)
+            paint.setShadowLayer(0f, 0f, 0f, 0)
+
+            // Subtle ring pulse that follows the breath
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1.5f + avgLevel * 2f
+            paint.color = baseColor
+            paint.alpha = (40 + breathSize * 60).toInt()
+            canvas.drawCircle(cx, cy, radius * 1.15f, paint)
+        }
+
+        /**
+         * Close Encounters of the Third Kind theme — Massive mothership
+         * hovering overhead with individually-illuminated light panels that
+         * flash in different colors, reacting to audio frequencies. Inspired
+         * by the "dueling tones" climax at Devils Tower where the mothership
+         * communicates through musical tones paired with colored lights.
+         * Each panel is its own spectrum bin, flashing independently.
+         */
+        // Per-panel random state for Close Encounters (deterministic per panel index)
+        private val cePanelHues = FloatArray(72) { (it * 137.508f) % 360f }
+        private val cePanelPhases = FloatArray(72) { (it * 73.13f) % 1f }
+        private val cePanelSpeeds = FloatArray(72) { 0.4f + (it * 31.37f % 1f) * 1.6f }
+
+        private fun drawCloseEncounters(canvas: Canvas, w: Float, h: Float) {
+            val cx = w / 2f
+            val t = frameCount * 0.018f
+            val bassEnergy = bandEnergy(0, 5)
+            val midEnergy = bandEnergy(9, 18)
+            val trebleEnergy = bandEnergy(22, 31)
+            val avgLevel = bandEnergy(0, barCount - 1)
+
+            // ── Deep night sky background ──
+            paint.style = Paint.Style.FILL
+            paint.color = Color.parseColor("#020408")
+            canvas.drawRect(0f, 0f, w, h, paint)
+
+            // Subtle stars
+            paint.color = Color.WHITE
+            for (s in 0 until 20) {
+                val sx = (s * 197.37f + 11f) % w
+                val sy = (s * 83.19f + 7f) % (h * 0.35f)
+                val twinkle = (0.3f + 0.7f * ((kotlin.math.sin((t * cePanelSpeeds[s % 72] + s * 2.1f).toDouble()).toFloat() + 1f) / 2f))
+                paint.alpha = (20 + twinkle * 50).toInt().coerceAtMost(80)
+                canvas.drawCircle(sx, sy, 0.6f + twinkle * 0.5f, paint)
+            }
+
+            // ── Devils Tower silhouette at bottom ──
+            val towerPath = android.graphics.Path()
+            val towerBase = h * 0.88f
+            towerPath.moveTo(0f, h)
+            towerPath.lineTo(0f, towerBase)
+            towerPath.lineTo(w * 0.15f, towerBase - h * 0.02f)
+            towerPath.lineTo(w * 0.25f, towerBase - h * 0.06f)
+            towerPath.lineTo(w * 0.35f, h * 0.58f)
+            towerPath.lineTo(w * 0.38f, h * 0.54f)
+            towerPath.lineTo(w * 0.42f, h * 0.52f) // Mesa top left
+            towerPath.lineTo(w * 0.50f, h * 0.50f) // Mesa peak
+            towerPath.lineTo(w * 0.58f, h * 0.52f) // Mesa top right
+            towerPath.lineTo(w * 0.62f, h * 0.54f)
+            towerPath.lineTo(w * 0.65f, h * 0.58f)
+            towerPath.lineTo(w * 0.75f, towerBase - h * 0.06f)
+            towerPath.lineTo(w * 0.85f, towerBase - h * 0.02f)
+            towerPath.lineTo(w, towerBase)
+            towerPath.lineTo(w, h)
+            towerPath.close()
+            paint.color = Color.parseColor("#080808")
+            paint.alpha = 255
+            canvas.drawPath(towerPath, paint)
+
+            // ── Mothership — massive dome shape ──
+            // The ship sits in the upper portion, overwhelming in scale
+            val shipCx = cx
+            val shipCy = h * 0.22f
+            val shipW = w * 0.75f
+            val shipH = h * 0.28f
+            val shipBottom = shipCy + shipH * 0.5f
+
+            // Ship hull: dark silhouette with slight structure visible
+            paint.style = Paint.Style.FILL
+            paint.color = Color.parseColor("#0C0C14")
+            // Main dome (upper half ellipse)
+            val hullRect = android.graphics.RectF(
+                shipCx - shipW / 2f, shipCy - shipH * 0.55f,
+                shipCx + shipW / 2f, shipCy + shipH * 0.45f
+            )
+            canvas.drawOval(hullRect, paint)
+
+            // Slightly lighter rim to define the edge
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1.2f
+            paint.color = Color.parseColor("#1A1A2A")
+            paint.alpha = 60
+            canvas.drawOval(hullRect, paint)
+
+            // ── Mothership light panels — the spectacle ──
+            // Arranged in concentric rings on the belly of the ship.
+            // Each panel independently flashes a random color, driven by
+            // different frequency bins. This recreates the "city of lights"
+            // effect and the dueling-tones communication sequence.
+            val panelColors = intArrayOf(
+                Color.parseColor("#FF1111"), // Red
+                Color.parseColor("#FF6600"), // Orange
+                Color.parseColor("#FFEE00"), // Yellow
+                Color.parseColor("#00FF44"), // Green
+                Color.parseColor("#0088FF"), // Blue
+                Color.parseColor("#FFFFFF"), // White
+                Color.parseColor("#FF00AA"), // Magenta
+                Color.parseColor("#00FFCC")  // Teal
+            )
+
+            val rings = 5
+            val totalPanels = 48
+            var panelIdx = 0
+
+            for (ring in 0 until rings) {
+                val ringRatio = (ring + 1f) / (rings + 1f)
+                val ringRadiusX = shipW * 0.42f * ringRatio
+                val ringRadiusY = shipH * 0.32f * ringRatio
+                val panelsInRing = (6 + ring * 3).coerceAtMost(totalPanels - panelIdx)
+
+                for (p in 0 until panelsInRing) {
+                    if (panelIdx >= 72) break
+                    val angle = (p.toFloat() / panelsInRing) * Math.PI.toFloat() * 2f +
+                                ring * 0.4f + t * 0.15f * cePanelSpeeds[panelIdx % 72]
+                    val px = shipCx + kotlin.math.cos(angle.toDouble()).toFloat() * ringRadiusX
+                    val py = shipCy + kotlin.math.sin(angle.toDouble()).toFloat() * ringRadiusY * 0.6f
+
+                    // Which frequency bin drives this panel
+                    val binIdx = (panelIdx * barCount / totalPanels.coerceAtLeast(1)).coerceIn(0, barCount - 1)
+                    val energy = barHeights[binIdx]
+
+                    // Panel flashing: each has its own phase and timing
+                    val phase = cePanelPhases[panelIdx % 72]
+                    val speed = cePanelSpeeds[panelIdx % 72]
+                    val flashCycle = kotlin.math.sin((t * speed * 2f + phase * Math.PI.toFloat() * 2f).toDouble()).toFloat()
+                    val flashIntensity = ((flashCycle + 1f) / 2f * energy).coerceIn(0f, 1f)
+
+                    // Pick color — shifts with audio and randomized per panel
+                    val colorIdx = ((panelIdx + (frameCount / (8 + panelIdx % 12)).toInt()) % panelColors.size)
+                    val panelColor = panelColors[colorIdx]
+
+                    // Panel size varies by ring
+                    val panelSize = (2.5f + ring * 0.8f) * (w / 400f).coerceIn(0.8f, 1.5f)
+
+                    if (flashIntensity > 0.08f) {
+                        paint.style = Paint.Style.FILL
+                        paint.color = panelColor
+                        paint.alpha = (60 + flashIntensity * 195).toInt().coerceAtMost(255)
+                        val glowR = panelSize * (1f + flashIntensity * 1.2f)
+                        paint.setShadowLayer(glowR * 2f, 0f, 0f, panelColor)
+                        canvas.drawCircle(px, py, glowR, paint)
+
+                        // Bright core
+                        paint.color = Color.WHITE
+                        paint.alpha = (flashIntensity * 200).toInt().coerceAtMost(240)
+                        paint.setShadowLayer(panelSize, 0f, 0f, panelColor)
+                        canvas.drawCircle(px, py, panelSize * 0.4f * flashIntensity, paint)
+                    } else {
+                        // Dim/off panel — barely visible
+                        paint.style = Paint.Style.FILL
+                        paint.color = Color.parseColor("#111122")
+                        paint.alpha = 30
+                        paint.setShadowLayer(0f, 0f, 0f, 0)
+                        canvas.drawCircle(px, py, panelSize * 0.5f, paint)
+                    }
+                    panelIdx++
+                }
+            }
+            paint.setShadowLayer(0f, 0f, 0f, 0)
+
+            // ── Central light hatch — bright scanning beam ──
+            // Rotating ring of white light around the central opening
+            val hatchR = shipW * 0.06f
+            val scanAngle = t * 1.5f
+            paint.style = Paint.Style.FILL
+
+            // Hatch glow base
+            paint.color = Color.WHITE
+            paint.alpha = (30 + avgLevel * 60).toInt().coerceAtMost(100)
+            paint.setShadowLayer(hatchR * 2f, 0f, 0f, Color.parseColor("#FFFFCC"))
+            canvas.drawCircle(shipCx, shipCy, hatchR * 1.8f, paint)
+
+            // Scanning light sweep (the famous rotating beam)
+            val sweepArc = 45f
+            for (beam in 0 until 3) {
+                val beamAngle = scanAngle * 57.3f + beam * 120f
+                paint.color = Color.WHITE
+                paint.alpha = (40 + avgLevel * 80).toInt().coerceAtMost(140)
+                paint.setShadowLayer(hatchR * 1.5f, 0f, 0f, Color.parseColor("#FFFFDD"))
+                val arcRect = android.graphics.RectF(
+                    shipCx - hatchR * 2.5f, shipCy - hatchR * 2.5f,
+                    shipCx + hatchR * 2.5f, shipCy + hatchR * 2.5f
+                )
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 2f + bassEnergy * 2f
+                canvas.drawArc(arcRect, beamAngle, sweepArc, false, paint)
+            }
+            paint.setShadowLayer(0f, 0f, 0f, 0)
+
+            // ── Downward light beam from mothership ──
+            // Dramatic cone of light illuminating Devils Tower
+            val beamTop = shipBottom
+            val beamBottom = h * 0.52f
+            val beamTopW = shipW * 0.12f
+            val beamBotW = shipW * 0.35f
+            val beamPath = android.graphics.Path()
+            beamPath.moveTo(shipCx - beamTopW / 2f, beamTop)
+            beamPath.lineTo(shipCx - beamBotW / 2f, beamBottom)
+            beamPath.lineTo(shipCx + beamBotW / 2f, beamBottom)
+            beamPath.lineTo(shipCx + beamTopW / 2f, beamTop)
+            beamPath.close()
+
+            paint.style = Paint.Style.FILL
+            paint.color = Color.parseColor("#FFFFEE")
+            paint.alpha = (8 + avgLevel * 25).toInt().coerceAtMost(40)
+            canvas.drawPath(beamPath, paint)
+
+            // Beam stripe highlights pulsing with mid frequencies
+            paint.color = Color.WHITE
+            paint.alpha = (5 + midEnergy * 20).toInt().coerceAtMost(30)
+            paint.strokeWidth = 1f
+            paint.style = Paint.Style.STROKE
+            val stripeCount = 5
+            for (s in 0 until stripeCount) {
+                val progress = (s + 1f) / (stripeCount + 1f)
+                val stripeY = beamTop + (beamBottom - beamTop) * progress
+                val stripeHalfW = (beamTopW + (beamBotW - beamTopW) * progress) / 2f
+                canvas.drawLine(shipCx - stripeHalfW, stripeY, shipCx + stripeHalfW, stripeY, paint)
+            }
+
+            // ── "Dueling tones" visualization ──
+            // Musical note blocks at the base that light up with the
+            // frequency spectrum — represents the communication sequence
+            val toneBarCount = 12
+            val toneBarW = w * 0.04f
+            val toneBarGap = w * 0.015f
+            val toneBarMaxH = h * 0.08f
+            val toneStartX = cx - (toneBarCount * (toneBarW + toneBarGap) - toneBarGap) / 2f
+            val toneY = h * 0.95f
+
+            val toneColors = intArrayOf(
+                Color.parseColor("#FF2200"), Color.parseColor("#FF6600"),
+                Color.parseColor("#FFCC00"), Color.parseColor("#FFFF00"),
+                Color.parseColor("#00FF44"), Color.parseColor("#00FF88"),
+                Color.parseColor("#0088FF"), Color.parseColor("#0044FF"),
+                Color.parseColor("#6600FF"), Color.parseColor("#AA00FF"),
+                Color.parseColor("#FF00AA"), Color.parseColor("#FF0066")
+            )
+
+            for (tb in 0 until toneBarCount) {
+                val binIdx = (tb * barCount / toneBarCount).coerceIn(0, barCount - 1)
+                val energy = barHeights[binIdx]
+                val barH = energy * toneBarMaxH
+                val barX = toneStartX + tb * (toneBarW + toneBarGap)
+
+                paint.style = Paint.Style.FILL
+                paint.color = toneColors[tb % toneColors.size]
+                paint.alpha = (60 + energy * 195).toInt().coerceAtMost(255)
+                paint.setShadowLayer(3f + energy * 5f, 0f, 0f, toneColors[tb % toneColors.size])
+                canvas.drawRect(barX, toneY - barH, barX + toneBarW, toneY, paint)
+
+                // Bright top cap
+                if (energy > 0.1f) {
+                    paint.color = Color.WHITE
+                    paint.alpha = (energy * 180).toInt().coerceAtMost(200)
+                    canvas.drawRect(barX, toneY - barH, barX + toneBarW, toneY - barH + 1.5f, paint)
+                }
+            }
+            paint.setShadowLayer(0f, 0f, 0f, 0)
+
+            // ── HUD text ──
+            paint.style = Paint.Style.FILL
+            paint.typeface = android.graphics.Typeface.MONOSPACE
+            paint.textSize = h * 0.030f
+            paint.textAlign = Paint.Align.LEFT
+            paint.color = Color.parseColor("#FF6600")
+            paint.alpha = 70
+            canvas.drawText("CE3K SIGNAL", 6f, h * 0.04f, paint)
+            paint.textAlign = Paint.Align.RIGHT
+            paint.color = Color.parseColor("#FFCC00")
+            paint.alpha = 55
+            canvas.drawText("TONE SEQ %.0f".format(frameCount.toFloat()), w - 6f, h * 0.04f, paint)
+            paint.typeface = android.graphics.Typeface.DEFAULT
+        }
+
+        private fun blendColors(c1: Int, c2: Int, ratio: Float): Int {
+            val inv = 1f - ratio
+            val r = (Color.red(c1) * inv + Color.red(c2) * ratio).toInt()
+            val g = (Color.green(c1) * inv + Color.green(c2) * ratio).toInt()
+            val b = (Color.blue(c1) * inv + Color.blue(c2) * ratio).toInt()
+            return Color.rgb(r, g, b)
+        }
     }
 
     private fun setupFullScreenControlsUI() {
@@ -7789,9 +10387,10 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         // Create Media Buttons (reusing logic from mask controls)
         btnFsPrevTrack =
                 createMediaButton(R.string.fa_backward_step) {
-                    getMediaControlWebView()
-                            .evaluateJavascript(
-                                    """
+                    val targetWebView = getMediaControlWebView()
+                    evaluateMediaControlCommand(
+                            targetWebView,
+                            """
                 (function() {
                     var prevBtn = document.querySelector('.ytp-prev-button') ||
                                   document.querySelector('[aria-label*="previous" i]') ||
@@ -7802,17 +10401,18 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                     if (media) media.currentTime = 0;
                 })();
                 """.trimIndent(),
-                                    null
-                            )
+                            "(function(){ if(window.prevStation){ window.prevStation(); } })();"
+                    )
                 }
 
         btnFsPrev =
                 createMediaButton(R.string.fa_backward) {
-                    getMediaControlWebView()
-                            .evaluateJavascript(
-                                    "document.querySelector('video, audio').currentTime -= 10;",
-                                    null
-                            )
+                    val targetWebView = getMediaControlWebView()
+                    evaluateMediaControlCommand(
+                            targetWebView,
+                            "document.querySelector('video, audio').currentTime -= 10;",
+                            "(function(){ if(window.prevStation){ window.prevStation(); } })();"
+                    )
                 }
 
         // Single Play/Pause toggle button
@@ -7821,21 +10421,23 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                     if (isFsPlaying) {
                         // Currently playing, so pause
                         DebugLog.d("FullscreenTouch", "Pause clicked, switching to play icon")
-                        getMediaControlWebView()
-                                .evaluateJavascript(
-                                        "document.querySelector('video, audio').pause();",
-                                        null
-                                )
+                        val targetWebView = getMediaControlWebView()
+                        evaluateMediaControlCommand(
+                                targetWebView,
+                                "document.querySelector('video, audio').pause();",
+                                "(function(){ if(window.tapRadioNativePausePlayback){ window.tapRadioNativePausePlayback(); return; } if(window.togglePlay){ window.togglePlay(); } })();"
+                        )
                         btnFsPlayPause.setText(R.string.fa_play)
                         isFsPlaying = false
                     } else {
                         // Currently paused, so play
                         DebugLog.d("FullscreenTouch", "Play clicked, switching to pause icon")
-                        getMediaControlWebView()
-                                .evaluateJavascript(
-                                        "document.querySelector('video, audio').play();",
-                                        null
-                                )
+                        val targetWebView = getMediaControlWebView()
+                        evaluateMediaControlCommand(
+                                targetWebView,
+                                "document.querySelector('video, audio').play();",
+                                "(function(){ if(window.tapRadioNativeResumePlayback){ window.tapRadioNativeResumePlayback(); return; } if(window.togglePlay){ window.togglePlay(); } })();"
+                        )
                         btnFsPlayPause.setText(R.string.fa_pause)
                         isFsPlaying = true
                     }
@@ -7849,18 +10451,20 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 
         btnFsNext =
                 createMediaButton(R.string.fa_forward) {
-                    getMediaControlWebView()
-                            .evaluateJavascript(
-                                    "document.querySelector('video, audio').currentTime += 10;",
-                                    null
-                            )
+                    val targetWebView = getMediaControlWebView()
+                    evaluateMediaControlCommand(
+                            targetWebView,
+                            "document.querySelector('video, audio').currentTime += 10;",
+                            "(function(){ if(window.nextStation){ window.nextStation(); } })();"
+                    )
                 }
 
         btnFsNextTrack =
                 createMediaButton(R.string.fa_forward_step) {
-                    getMediaControlWebView()
-                            .evaluateJavascript(
-                                    """
+                    val targetWebView = getMediaControlWebView()
+                    evaluateMediaControlCommand(
+                            targetWebView,
+                            """
                 (function() {
                     var nextBtn = document.querySelector('.ytp-next-button') ||
                                   document.querySelector('[aria-label*="next" i]') ||
@@ -7871,8 +10475,8 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                     if (media) media.currentTime = media.duration;
                 })();
                 """.trimIndent(),
-                                    null
-                            )
+                            "(function(){ if(window.nextStation){ window.nextStation(); } })();"
+                    )
                 }
 
         fullScreenMediaControls.addView(btnFsPrevTrack)
@@ -7887,6 +10491,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
             setText(iconRes)
             setBackgroundResource(R.drawable.nav_button_background)
             setTextColor(Color.WHITE)
+            alpha = 0.5f
             textSize = 18f
             gravity = Gravity.CENTER
             setPadding(8, 8, 8, 8)
@@ -7897,7 +10502,10 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                     }
             isClickable = true
             isFocusable = true
-            setOnClickListener { onClick() }
+            setOnClickListener {
+                onClick()
+                scheduleMaskedNowPlayingRefresh()
+            }
         }
     }
 
@@ -7914,6 +10522,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         if (isPlaying) {
             lastMediaPlayingAt = SystemClock.uptimeMillis()
         }
+        updatePlaybackWakeLocks()
         post {
             if (isPlaying) {
                 // DebugLog.d("MediaControls", "Setting to playing state")
@@ -7932,6 +10541,8 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                 // DebugLog.d("MediaControls", "Controls container visibility:
                 // ${maskMediaControlsContainer.visibility}")
             }
+
+            refreshMaskedNowPlaying()
 
             // Update full screen controls as well
             if (::btnFsPlayPause.isInitialized && !suppressFullscreenMediaControls) {
@@ -7958,20 +10569,31 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         }
     }
 
+    private fun isTapRadioWebView(targetWebView: WebView): Boolean {
+        return targetWebView.url?.contains("radio.html", ignoreCase = true) == true
+    }
+
+    private fun evaluateMediaControlCommand(targetWebView: WebView, fallbackJs: String, tapRadioJs: String? = null) {
+        val script = if (tapRadioJs != null && isTapRadioWebView(targetWebView)) tapRadioJs else fallbackJs
+        targetWebView.evaluateJavascript(script, null)
+    }
+
     fun playMedia() {
         val webView = getMediaControlWebView()
-        webView.evaluateJavascript(
+        evaluateMediaControlCommand(
+                webView,
                 "var m = document.querySelector('video, audio'); if (m) m.play();",
-                null
+                "(function(){ if(window.tapRadioNativeResumePlayback){ window.tapRadioNativeResumePlayback(); return; } if(window.togglePlay){ window.togglePlay(); } })();"
         )
         updateMediaState(true)
     }
 
     fun pauseMedia() {
         val webView = getMediaControlWebView()
-        webView.evaluateJavascript(
+        evaluateMediaControlCommand(
+                webView,
                 "var m = document.querySelector('video, audio'); if (m) m.pause();",
-                null
+                "(function(){ if(window.tapRadioNativePausePlayback){ window.tapRadioNativePausePlayback(); return; } if(window.togglePlay){ window.togglePlay(); } })();"
         )
         updateMediaState(false)
     }
@@ -8003,6 +10625,7 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
 
         val anyPlaying = mediaStateByWindowId.values.any { it }
         updateMediaState(anyPlaying)
+        refreshMaskedNowPlaying()
     }
 
     private fun getMediaControlWebView(): WebView {
@@ -8017,6 +10640,137 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                 }
 
         return windows.firstOrNull { it.id == targetId }?.webView ?: webView
+    }
+
+    fun refreshMaskedNowPlaying() {
+        if (!::maskNowPlayingText.isInitialized) return
+        post {
+            val label = resolveMaskedNowPlayingLabel()
+            if (!isScreenMasked || label.isNullOrBlank()) {
+                maskNowPlayingText.visibility = View.GONE
+            } else {
+                maskNowPlayingText.text = label
+                maskNowPlayingText.visibility = View.VISIBLE
+                maskNowPlayingText.bringToFront()
+            }
+        }
+    }
+
+    private fun scheduleMaskedNowPlayingRefresh() {
+        val delays = longArrayOf(120L, 500L, 1200L)
+        refreshMaskedNowPlaying()
+        delays.forEach { delayMs ->
+            postDelayed({ refreshMaskedNowPlaying() }, delayMs)
+        }
+    }
+
+    /**
+     * After a track skip (next/prev), YouTube SPA navigations take several
+     * seconds to update document.title.  We probe at multiple intervals and
+     * also pull the title directly from the DOM which updates faster.
+     */
+    private fun scheduleTrackChangeRefresh() {
+        val delays = longArrayOf(300L, 800L, 1500L, 2500L, 4000L, 6000L)
+        delays.forEach { delayMs ->
+            postDelayed({
+                refreshMaskedNowPlayingFromJs()
+                refreshMaskedNowPlaying()
+            }, delayMs)
+        }
+    }
+
+
+    private fun getFreshMaskedDomTitle(currentUrl: String? = null): String? {
+        val title = lastMaskedDomTitle?.trim().orEmpty()
+        if (title.isBlank()) return null
+        if (SystemClock.uptimeMillis() - lastMaskedDomTitleAt > maskedDomTitleFreshMs) return null
+        if (!currentUrl.isNullOrBlank()) {
+            val cachedUrl = lastMaskedDomTitleUrl.orEmpty()
+            val sameYoutubeFamily =
+                (currentUrl.contains("youtube.com", ignoreCase = true) || currentUrl.contains("youtu.be", ignoreCase = true)) &&
+                (cachedUrl.contains("youtube.com", ignoreCase = true) || cachedUrl.contains("youtu.be", ignoreCase = true))
+            if (!sameYoutubeFamily) return null
+        }
+        return title
+    }
+
+    /**
+     * Use JS to extract the video title directly from the DOM.  On YouTube
+     * the element `yt-formatted-string.ytd-watch-metadata` or the
+     * `<title>` tag updates before `WebView.getTitle()` reflects it.
+     */
+    private fun refreshMaskedNowPlayingFromJs() {
+        if (!isScreenMasked || !::maskNowPlayingText.isInitialized) return
+        val webView = try { getMediaControlWebView() } catch (_: Exception) { return }
+        val url = webView.url.orEmpty()
+        if (!url.contains("youtube.com", true) && !url.contains("youtu.be", true)) return
+        webView.evaluateJavascript(
+            """
+            (function() {
+                var el = document.querySelector('yt-formatted-string.style-scope.ytd-watch-metadata') ||
+                         document.querySelector('#info-contents yt-formatted-string') ||
+                         document.querySelector('h1.title yt-formatted-string') ||
+                         document.querySelector('title');
+                if (!el) return '';
+                var t = (el.textContent || el.innerText || '').trim();
+                t = t.replace(/ - YouTube${'$'}/, '').replace(/ - YouTube Music${'$'}/, '').trim();
+                if (!t || /^youtube$/i.test(t) || /^youtube music$/i.test(t)) return '';
+                return t;
+            })();
+            """.trimIndent()
+        ) { result ->
+            val title = result?.trim('"', ' ') ?: return@evaluateJavascript
+            if (title.isNotBlank() && title != "null") {
+                post {
+                    if (isScreenMasked) {
+                        lastMaskedDomTitle = title
+                        lastMaskedDomTitleUrl = url
+                        lastMaskedDomTitleAt = SystemClock.uptimeMillis()
+                        maskNowPlayingText.text = title
+                        maskNowPlayingText.visibility = View.VISIBLE
+                        maskNowPlayingText.bringToFront()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun resolveMaskedNowPlayingLabel(): String? {
+        val prefs = context.getSharedPreferences("visionclaw_prefs", Context.MODE_PRIVATE)
+        val radioPlaying = prefs.getBoolean("tapradio_now_playing_active", false)
+        val stationName = prefs.getString("tapradio_now_playing_name", "")?.trim().orEmpty()
+
+        // During track transitions isMediaPlaying can briefly be false;
+        // also check recency of last playback so we don't blank the label.
+        val recentlyPlaying = isMediaPlaying ||
+            (SystemClock.uptimeMillis() - lastMediaPlayingAt < 8000)
+        val mediaWebView = try { getMediaControlWebView() } catch (_: Exception) { null }
+        val currentUrl = mediaWebView?.url.orEmpty()
+        val isYoutube = currentUrl.contains("youtube.com", ignoreCase = true) ||
+            currentUrl.contains("youtu.be", ignoreCase = true)
+        if (isYoutube) {
+            getFreshMaskedDomTitle(currentUrl)?.let { return it }
+        }
+        if (radioPlaying && stationName.isNotBlank() && !isYoutube) {
+            return stationName
+        }
+        if (!recentlyPlaying || mediaWebView == null) return null
+        if (isYoutube) {
+            val rawTitle = mediaWebView.title?.trim().orEmpty()
+            val cleaned = rawTitle
+                .removeSuffix(" - YouTube")
+                .removeSuffix(" - YouTube Music")
+                .trim()
+            return cleaned.takeIf {
+                it.isNotBlank() &&
+                    !it.equals("YouTube", ignoreCase = true) &&
+                    !it.equals("YouTube Music", ignoreCase = true)
+            }
+        }
+        if (radioPlaying && stationName.isNotBlank()) {
+            return stationName
+        }
+        return getFreshMaskedDomTitle(currentUrl)
     }
 
     fun injectLocation(latitude: Double, longitude: Double) {
@@ -8036,7 +10790,28 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                     },
                     timestamp: new Date().getTime()
                 };
-                
+
+                // Initialize watcher registry if not present
+                if (!window.__geoWatchers) window.__geoWatchers = {};
+                if (!window.__geoNextWatchId) window.__geoNextWatchId = 1;
+
+                // Notify all registered watchPosition callbacks with updated position
+                var watchers = window.__geoWatchers;
+                for (var id in watchers) {
+                    if (watchers.hasOwnProperty(id) && typeof watchers[id] === 'function') {
+                        try { watchers[id](window.__injectedPosition); } catch(e) {
+                            console.warn('[TapLink] watcher ' + id + ' error:', e);
+                        }
+                    }
+                }
+
+                // Only set up the mock geolocation API once
+                if (window.__geoMockInstalled) {
+                    console.log("[TapLink] Location updated: " + $latitude + ", " + $longitude + " (watchers: " + Object.keys(watchers).length + ")");
+                    return;
+                }
+                window.__geoMockInstalled = true;
+
                 // 1. Mock Permissions API to always return 'granted'
                 if (navigator.permissions) {
                     var originalQuery = navigator.permissions.query.bind(navigator.permissions);
@@ -8047,26 +10822,34 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                         return originalQuery(parameters);
                     };
                 }
-                
+
                 // 2. Override Geolocation API using defineProperty for robustness
                 var mockGeolocation = {
                     getCurrentPosition: function(success, error, options) {
                         setTimeout(function() {
-                            success(window.__injectedPosition);
+                            if (window.__injectedPosition) {
+                                success(window.__injectedPosition);
+                            } else if (error) {
+                                error({code: 2, message: 'Position unavailable'});
+                            }
                         }, 10);
                     },
                     watchPosition: function(success, error, options) {
-                        var watchId = Math.floor(Math.random() * 10000);
+                        var watchId = window.__geoNextWatchId++;
+                        window.__geoWatchers[watchId] = success;
+                        // Fire immediately with current position
                         setTimeout(function() {
-                            success(window.__injectedPosition);
+                            if (window.__injectedPosition) {
+                                success(window.__injectedPosition);
+                            }
                         }, 10);
                         return watchId;
                     },
                     clearWatch: function(id) {
-                        // Do nothing
+                        delete window.__geoWatchers[id];
                     }
                 };
-                
+
                 try {
                     Object.defineProperty(navigator, 'geolocation', {
                         value: mockGeolocation,
@@ -8079,8 +10862,8 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                     navigator.geolocation.watchPosition = mockGeolocation.watchPosition;
                     navigator.geolocation.clearWatch = mockGeolocation.clearWatch;
                 }
-                
-                console.log("[TapLink] Location injected: " + $latitude + ", " + $longitude);
+
+                console.log("[TapLink] Location mock installed + injected: " + $latitude + ", " + $longitude);
             })();
         """.trimIndent()
 
@@ -8384,6 +11167,49 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
         targetWebView.evaluateJavascript(script, null)
     }
 
+    // ── Media file interception for TapInsight media player ──
+    companion object {
+        private val MEDIA_TEXT_EXTS = setOf("txt","md","log","csv","json","xml","html","htm","rtf","ini","cfg","conf","yaml","yml","toml")
+        private val MEDIA_AUDIO_EXTS = setOf("mp3","wav","ogg","m4a","aac","flac","wma","opus")
+        private val MEDIA_VIDEO_EXTS = setOf("mp4","webm","mkv","avi","mov","m4v","ogv","3gp")
+    }
+
+    private fun interceptMediaUrl(view: android.webkit.WebView, url: String): Boolean {
+        val path = url.split("?")[0].split("#")[0]
+        val ext = path.substringAfterLast('.', "").lowercase()
+        val mediaType = when {
+            MEDIA_TEXT_EXTS.contains(ext) -> "text"
+            MEDIA_AUDIO_EXTS.contains(ext) -> "audio"
+            MEDIA_VIDEO_EXTS.contains(ext) -> "video"
+            else -> return false
+        }
+        val title = try {
+            java.net.URLDecoder.decode(path.substringAfterLast('/'), "UTF-8")
+        } catch (_: Exception) { path.substringAfterLast('/') }
+        val encodedUrl = java.net.URLEncoder.encode(url, "UTF-8")
+        val encodedTitle = java.net.URLEncoder.encode(title, "UTF-8")
+        val srtUrl = if (mediaType == "video") {
+            java.net.URLEncoder.encode(path.substringBeforeLast('.') + ".srt", "UTF-8")
+        } else ""
+
+        // Read media player preferences from companion app settings
+        val vcPrefs = context.getSharedPreferences("visionclaw_prefs", android.content.Context.MODE_PRIVATE)
+        val voiceName = vcPrefs.getString("media_tts_voice", "") ?: ""
+        val underline = vcPrefs.getBoolean("media_tts_underline", true)
+        val mediaParams = buildString {
+            if (voiceName.isNotBlank()) append("&voice=${java.net.URLEncoder.encode(voiceName, "UTF-8")}")
+            if (!underline) append("&underline=false")
+        }
+
+        val playerUrl = "file:///android_asset/media_player.html" +
+            "?url=$encodedUrl&type=$mediaType&title=$encodedTitle" +
+            (if (srtUrl.isNotBlank()) "&srt=$srtUrl" else "") +
+            mediaParams
+        DebugLog.d("MediaPlayer", "DualWebView intercepted $mediaType ($ext): $url")
+        view.loadUrl(playerUrl)
+        return true
+    }
+
     private class MediaInterface(
             private val parent: DualWebViewGroup,
             private val sourceWebView: WebView
@@ -8412,6 +11238,35 @@ constructor(context: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0
                         extentY,
                         offsetY
                 )
+            }
+        }
+
+        // ── Pending text for the pull-based media player approach ──
+        @Volatile private var pendingReaderText: String? = null
+
+        @android.webkit.JavascriptInterface
+        fun getPendingText(): String {
+            val text = pendingReaderText ?: ""
+            pendingReaderText = null
+            return text
+        }
+
+        @android.webkit.JavascriptInterface
+        fun openTextReader(text: String, title: String) {
+            android.util.Log.d("MediaInterface", "openTextReader: ${text.length} chars, title=$title")
+            if (text.isBlank()) return
+            pendingReaderText = text
+            parent.post {
+                val vcPrefs = parent.context.getSharedPreferences("visionclaw_prefs", Context.MODE_PRIVATE)
+                val voiceName = vcPrefs.getString("media_tts_voice", "") ?: ""
+                val underline = vcPrefs.getBoolean("media_tts_underline", true)
+                val encodedTitle = java.net.URLEncoder.encode(title.take(200), "UTF-8")
+                val mediaParams = buildString {
+                    if (voiceName.isNotBlank()) append("&voice=${java.net.URLEncoder.encode(voiceName, "UTF-8")}")
+                    if (!underline) append("&underline=false")
+                }
+                val playerUrl = "file:///android_asset/media_player.html?type=text&title=$encodedTitle$mediaParams"
+                sourceWebView.loadUrl(playerUrl)
             }
         }
     }

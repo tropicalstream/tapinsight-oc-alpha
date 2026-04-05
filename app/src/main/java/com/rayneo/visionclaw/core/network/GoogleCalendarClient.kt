@@ -1,14 +1,13 @@
 package com.rayneo.visionclaw.core.network
 
+import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.net.UnknownHostException
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -26,13 +25,15 @@ import java.util.TimeZone
  */
 class GoogleCalendarClient(
     private val apiKeyProvider: () -> String?,
-    private val accessTokenProvider: () -> String? = { null }
+    private val accessTokenProvider: () -> String? = { null },
+    private val context: Context? = null
 ) {
 
     companion object {
         private const val TAG = "GoogleCalendar"
-        private const val BASE_URL =
-            "https://www.googleapis.com/calendar/v3/calendars"
+        private val API_ROOTS = listOf(
+            "https://www.googleapis.com/calendar/v3",
+        )
         private const val CONNECT_TIMEOUT_MS = 8_000
         private const val READ_TIMEOUT_MS = 15_000
     }
@@ -81,44 +82,57 @@ class GoogleCalendarClient(
         }
 
         try {
-            val urlStr = "https://www.googleapis.com/calendar/v3/users/me/calendarList"
-            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
-                setRequestProperty("Authorization", "Bearer $accessToken")
-            }
-
-            val responseCode = conn.responseCode
-            if (responseCode in 200..299) {
-                val body = BufferedReader(
-                    InputStreamReader(conn.inputStream, Charsets.UTF_8)
-                ).use { it.readText() }
-
-                val json = JSONObject(body)
-                val items = json.optJSONArray("items")
-                    ?: return@withContext CalendarListResult.Success(emptyList())
-
-                val calendars = (0 until items.length()).map { i ->
-                    val item = items.getJSONObject(i)
-                    CalendarListEntry(
-                        id = item.optString("id", ""),
-                        summary = item.optString("summary", "(No name)"),
-                        primary = item.optBoolean("primary", false),
-                        backgroundColor = item.optString("backgroundColor", null),
-                        accessRole = item.optString("accessRole", null)
+            var lastError: CalendarListResult.Error? = null
+            API_ROOTS.forEachIndexed { index, apiRoot ->
+                val urlStr = "$apiRoot/users/me/calendarList"
+                try {
+                    Log.d(TAG, "CalendarList request via $apiRoot")
+                    val response = ActiveNetworkHttp.get(
+                        url = urlStr,
+                        headers = mapOf("Authorization" to "Bearer $accessToken"),
+                        connectTimeoutMs = CONNECT_TIMEOUT_MS,
+                        readTimeoutMs = READ_TIMEOUT_MS
                     )
-                }
+                    val responseCode = response.code
+                    if (responseCode in 200..299) {
+                        val body = response.body
 
-                Log.d(TAG, "Fetched ${calendars.size} calendars")
-                CalendarListResult.Success(calendars)
-            } else {
-                val errorBody = BufferedReader(
-                    InputStreamReader(conn.errorStream ?: conn.inputStream, Charsets.UTF_8)
-                ).use { it.readText() }
-                Log.e(TAG, "CalendarList HTTP $responseCode: $errorBody")
-                CalendarListResult.Error("Calendar list error ($responseCode)")
+                        val json = JSONObject(body)
+                        val items = json.optJSONArray("items")
+                            ?: return@withContext CalendarListResult.Success(emptyList())
+
+                        val calendars = (0 until items.length()).map { i ->
+                            val item = items.getJSONObject(i)
+                            CalendarListEntry(
+                                id = item.optString("id", ""),
+                                summary = item.optString("summary", "(No name)"),
+                                primary = item.optBoolean("primary", false),
+                                backgroundColor = item.optString("backgroundColor").takeIf { it.isNotBlank() },
+                                accessRole = item.optString("accessRole").takeIf { it.isNotBlank() }
+                            )
+                        }
+
+                        Log.d(TAG, "Fetched ${calendars.size} calendars via $apiRoot")
+                        return@withContext CalendarListResult.Success(calendars)
+                    }
+
+                    val errorBody = response.body
+                    Log.e(TAG, "CalendarList HTTP $responseCode via $apiRoot: $errorBody")
+                    lastError = CalendarListResult.Error("Calendar list error ($responseCode)")
+                    if (responseCode == 404 && index < API_ROOTS.lastIndex) {
+                        Log.w(TAG, "CalendarList retrying alternate API root after 404: $apiRoot")
+                        return@forEachIndexed
+                    }
+                    return@withContext lastError as CalendarListResult.Error
+                } catch (e: UnknownHostException) {
+                    Log.w(TAG, "CalendarList host resolution failed for $apiRoot: ${e.message}")
+                    lastError = CalendarListResult.Error(e.localizedMessage ?: "Unable to resolve calendar host")
+                    if (index == API_ROOTS.lastIndex) {
+                        return@withContext lastError as CalendarListResult.Error
+                    }
+                }
             }
+            lastError ?: CalendarListResult.Error("Calendar list unavailable")
         } catch (e: Exception) {
             Log.e(TAG, "CalendarList request failed", e)
             CalendarListResult.Error(e.localizedMessage ?: "Unknown error")
@@ -164,83 +178,99 @@ class GoogleCalendarClient(
 
             // ── 3. Execute HTTP request ──────────────────────────────
             val useOAuth = !accessToken.isNullOrBlank()
-            val urlStr = if (useOAuth) {
-                "$BASE_URL/$encodedId/events" +
-                        "?timeMin=$timeMin" +
-                        "&timeMax=$timeMax" +
-                        "&maxResults=$maxResults" +
-                        "&singleEvents=true" +
-                        "&orderBy=startTime"
-            } else {
-                "$BASE_URL/$encodedId/events" +
-                        "?key=$apiKey" +
-                        "&timeMin=$timeMin" +
-                        "&timeMax=$timeMax" +
-                        "&maxResults=$maxResults" +
-                        "&singleEvents=true" +
-                        "&orderBy=startTime"
-            }
-
-            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
-                if (useOAuth) {
-                    setRequestProperty("Authorization", "Bearer $accessToken")
+            var lastError: CalendarResult.Error? = null
+            API_ROOTS.forEachIndexed { index, apiRoot ->
+                val urlStr = buildString {
+                    append("$apiRoot/calendars/$encodedId/events")
+                    append("?timeMin=$timeMin")
+                    append("&timeMax=$timeMax")
+                    append("&maxResults=$maxResults")
+                    append("&singleEvents=true")
+                    append("&orderBy=startTime")
+                    if (!useOAuth) append("&key=$apiKey")
                 }
-            }
 
-            val responseCode = conn.responseCode
-
-            // ── 4. Parse response ────────────────────────────────────
-            if (responseCode in 200..299) {
-                val body = BufferedReader(
-                    InputStreamReader(conn.inputStream, Charsets.UTF_8)
-                ).use { it.readText() }
-
-                val json = JSONObject(body)
-                val items = json.optJSONArray("items") ?: return@withContext CalendarResult.Success(emptyList())
-
-                val events = (0 until items.length()).map { i ->
-                    val item = items.getJSONObject(i)
-                    val startObj = item.optJSONObject("start")
-                    val endObj = item.optJSONObject("end")
-
-                    CalendarEvent(
-                        id = item.optString("id", ""),
-                        summary = item.optString("summary", "(No title)"),
-                        start = parseEventTime(startObj),
-                        end = parseEventTime(endObj),
-                        location = item.optString("location", null),
-                        description = item.optString("description", null)
+                try {
+                    Log.d(TAG, "Calendar events request via $apiRoot calendarId=$calendarId useOAuth=$useOAuth")
+                    val headers = if (useOAuth) {
+                        mapOf("Authorization" to "Bearer $accessToken")
+                    } else {
+                        emptyMap()
+                    }
+                    val response = ActiveNetworkHttp.get(
+                        url = urlStr,
+                        headers = headers,
+                        connectTimeoutMs = CONNECT_TIMEOUT_MS,
+                        readTimeoutMs = READ_TIMEOUT_MS
                     )
-                }
+                    val responseCode = response.code
 
-                Log.d(TAG, "Fetched ${events.size} events")
-                CalendarResult.Success(events)
-            } else {
-                val errorBody = BufferedReader(
-                    InputStreamReader(conn.errorStream ?: conn.inputStream, Charsets.UTF_8)
-                ).use { it.readText() }
-                Log.e(TAG, "Calendar HTTP $responseCode: $errorBody")
+                    if (responseCode in 200..299) {
+                        val body = response.body
 
-                // Handle expired OAuth token
-                if (responseCode == 401 && useOAuth) {
-                    return@withContext CalendarResult.Error(
-                        "OAuth token expired. Re-authorize in TapInsight setup.", 401
-                    )
-                }
+                        val json = JSONObject(body)
+                        val items = json.optJSONArray("items") ?: return@withContext CalendarResult.Success(emptyList())
 
-                // Detect invalid API key
-                if (responseCode == 400 || responseCode == 403) {
-                    val lower = errorBody.lowercase()
-                    if (lower.contains("api key") || lower.contains("apikey")
-                        || lower.contains("forbidden") || lower.contains("invalid key")) {
-                        return@withContext CalendarResult.ApiKeyMissing
+                        val events = (0 until items.length()).map { i ->
+                            val item = items.getJSONObject(i)
+                            val startObj = item.optJSONObject("start")
+                            val endObj = item.optJSONObject("end")
+
+                            CalendarEvent(
+                                id = item.optString("id", ""),
+                                summary = item.optString("summary", "(No title)"),
+                                start = parseEventTime(startObj),
+                                end = parseEventTime(endObj),
+                                location = item.optString("location").takeIf { it.isNotBlank() },
+                                description = item.optString("description").takeIf { it.isNotBlank() }
+                            )
+                        }
+
+                        Log.d(TAG, "Fetched ${events.size} events via $apiRoot")
+                        return@withContext CalendarResult.Success(events)
+                    }
+
+                    val errorBody = response.body
+                    Log.e(TAG, "Calendar HTTP $responseCode via $apiRoot: $errorBody")
+
+                    if (responseCode == 401 && useOAuth) {
+                        return@withContext CalendarResult.Error(
+                            "OAuth token expired. Re-authorize in TapInsight setup.", 401
+                        )
+                    }
+
+                    if (responseCode == 400 || responseCode == 403) {
+                        val lower = errorBody.lowercase()
+                        if (lower.contains("api key") || lower.contains("apikey")
+                            || lower.contains("forbidden") || lower.contains("invalid key")) {
+                            return@withContext CalendarResult.ApiKeyMissing
+                        }
+                        if (lower.contains("accessnotconfigured") ||
+                            lower.contains("service_disabled") ||
+                            lower.contains("calendar api has not been used in project") ||
+                            lower.contains("calendar-json.googleapis.com")) {
+                            return@withContext CalendarResult.Error(
+                                "Google Calendar API is disabled in your Google Cloud project. Enable Calendar API, then retry.",
+                                responseCode
+                            )
+                        }
+                    }
+
+                    lastError = CalendarResult.Error("Calendar error ($responseCode)", responseCode)
+                    if (responseCode == 404 && index < API_ROOTS.lastIndex) {
+                        Log.w(TAG, "Retrying alternate Calendar API root after 404: $apiRoot")
+                        return@forEachIndexed
+                    }
+                    return@withContext lastError as CalendarResult.Error
+                } catch (e: UnknownHostException) {
+                    Log.w(TAG, "Calendar host resolution failed for $apiRoot: ${e.message}")
+                    lastError = CalendarResult.Error(e.localizedMessage ?: "Unable to resolve calendar host")
+                    if (index == API_ROOTS.lastIndex) {
+                        return@withContext lastError as CalendarResult.Error
                     }
                 }
-                CalendarResult.Error("Calendar error ($responseCode)", responseCode)
             }
+            lastError ?: CalendarResult.Error("Calendar unavailable")
         } catch (e: Exception) {
             Log.e(TAG, "Calendar request failed", e)
             CalendarResult.Error(e.localizedMessage ?: "Unknown error")
@@ -269,8 +299,6 @@ class GoogleCalendarClient(
 
         try {
             val encodedId = URLEncoder.encode(calendarId, "UTF-8")
-            val urlStr = "$BASE_URL/$encodedId/events"
-
             // Parse start time and compute end time
             val startDate = try {
                 SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).parse(
@@ -302,40 +330,54 @@ class GoogleCalendarClient(
                 if (!description.isNullOrBlank()) put("description", description)
             }
 
-            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
-                setRequestProperty("Authorization", "Bearer $accessToken")
-                setRequestProperty("Content-Type", "application/json")
-                doOutput = true
-            }
+            var lastError: CalendarResult.Error? = null
+            API_ROOTS.forEachIndexed { index, apiRoot ->
+                val urlStr = "$apiRoot/calendars/$encodedId/events"
+                try {
+                    Log.d(TAG, "Create event request via $apiRoot calendarId=$calendarId")
+                    val response = ActiveNetworkHttp.postJson(
+                        url = urlStr,
+                        jsonBody = eventBody.toString(),
+                        headers = mapOf(
+                            "Authorization" to "Bearer $accessToken",
+                            "Content-Type" to "application/json"
+                        ),
+                        connectTimeoutMs = CONNECT_TIMEOUT_MS,
+                        readTimeoutMs = READ_TIMEOUT_MS
+                    )
+                    val responseCode = response.code
+                    if (responseCode in 200..299) {
+                        val body = response.body
+                        val json = JSONObject(body)
+                        val event = CalendarEvent(
+                            id = json.optString("id", ""),
+                            summary = json.optString("summary", title),
+                            start = startDate,
+                            end = endDate,
+                            location = location,
+                            description = description
+                        )
+                        Log.i(TAG, "Created event via $apiRoot: ${event.summary}")
+                        return@withContext CalendarResult.Success(listOf(event))
+                    }
 
-            conn.outputStream.use { it.write(eventBody.toString().toByteArray(Charsets.UTF_8)) }
-
-            val responseCode = conn.responseCode
-            if (responseCode in 200..299) {
-                val body = BufferedReader(
-                    InputStreamReader(conn.inputStream, Charsets.UTF_8)
-                ).use { it.readText() }
-                val json = JSONObject(body)
-                val event = CalendarEvent(
-                    id = json.optString("id", ""),
-                    summary = json.optString("summary", title),
-                    start = startDate,
-                    end = endDate,
-                    location = location,
-                    description = description
-                )
-                Log.i(TAG, "Created event: ${event.summary}")
-                CalendarResult.Success(listOf(event))
-            } else {
-                val errorBody = BufferedReader(
-                    InputStreamReader(conn.errorStream ?: conn.inputStream, Charsets.UTF_8)
-                ).use { it.readText() }
-                Log.e(TAG, "Create event HTTP $responseCode: $errorBody")
-                CalendarResult.Error("Failed to create event ($responseCode)", responseCode)
+                    val errorBody = response.body
+                    Log.e(TAG, "Create event HTTP $responseCode via $apiRoot: $errorBody")
+                    lastError = CalendarResult.Error("Failed to create event ($responseCode)", responseCode)
+                    if (responseCode == 404 && index < API_ROOTS.lastIndex) {
+                        Log.w(TAG, "Retrying alternate Calendar API root for createEvent after 404: $apiRoot")
+                        return@forEachIndexed
+                    }
+                    return@withContext lastError as CalendarResult.Error
+                } catch (e: UnknownHostException) {
+                    Log.w(TAG, "Create event host resolution failed for $apiRoot: ${e.message}")
+                    lastError = CalendarResult.Error(e.localizedMessage ?: "Unable to resolve calendar host")
+                    if (index == API_ROOTS.lastIndex) {
+                        return@withContext lastError as CalendarResult.Error
+                    }
+                }
             }
+            lastError ?: CalendarResult.Error("Calendar unavailable")
         } catch (e: Exception) {
             Log.e(TAG, "Create event failed", e)
             CalendarResult.Error(e.localizedMessage ?: "Unknown error")

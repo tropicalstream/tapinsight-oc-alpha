@@ -62,14 +62,14 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="OpenClaw Endpoint"
+            android:text="TapClaw Endpoint"
             android:textColor="@color/text_primary" />
 
         <EditText
             android:id="@+id/openClawInput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="http://192.168.1.217:5000/tool"
+            android:hint=""
             android:imeOptions="flagNoExtractUi"
             android:inputType="textUri"
             android:textColor="@color/text_primary"

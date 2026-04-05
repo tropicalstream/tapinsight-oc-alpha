@@ -1,14 +1,10 @@
 package com.rayneo.visionclaw.core.network
 
+import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.io.OutputStreamWriter
-import java.net.HttpURLConnection
-import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -25,12 +21,13 @@ import java.util.TimeZone
  *   • Success → [TasksResult.Success] with list of tasks
  */
 class GoogleTasksClient(
-    private val accessTokenProvider: () -> String?
+    private val accessTokenProvider: () -> String?,
+    private val context: Context? = null
 ) {
 
     companion object {
         private const val TAG = "GoogleTasks"
-        private const val BASE_URL = "https://www.googleapis.com/tasks/v1"
+        private const val BASE_URL = "https://tasks.googleapis.com/tasks/v1"
         private const val CONNECT_TIMEOUT_MS = 8_000
         private const val READ_TIMEOUT_MS = 15_000
     }
@@ -77,16 +74,15 @@ class GoogleTasksClient(
         if (accessToken.isNullOrBlank()) return@withContext TaskListsResult.AuthRequired
 
         try {
-            val conn = (URL("$BASE_URL/users/@me/lists").openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
-                setRequestProperty("Authorization", "Bearer $accessToken")
-            }
-
-            val code = conn.responseCode
+            val response = ActiveNetworkHttp.get(
+                url = "$BASE_URL/users/@me/lists",
+                headers = mapOf("Authorization" to "Bearer $accessToken"),
+                connectTimeoutMs = CONNECT_TIMEOUT_MS,
+                readTimeoutMs = READ_TIMEOUT_MS
+            )
+            val code = response.code
             if (code in 200..299) {
-                val body = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
+                val body = response.body
                 val json = JSONObject(body)
                 val items = json.optJSONArray("items")
                     ?: return@withContext TaskListsResult.Success(emptyList())
@@ -102,7 +98,7 @@ class GoogleTasksClient(
                 Log.d(TAG, "Fetched ${lists.size} task lists")
                 TaskListsResult.Success(lists)
             } else {
-                val errorBody = BufferedReader(InputStreamReader(conn.errorStream ?: conn.inputStream, Charsets.UTF_8)).use { it.readText() }
+                val errorBody = response.body
                 Log.e(TAG, "TaskLists HTTP $code: $errorBody")
                 TaskListsResult.Error("Task lists error ($code)")
             }
@@ -131,16 +127,15 @@ class GoogleTasksClient(
                 "&showCompleted=false" +
                 "&showHidden=false"
 
-            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
-                setRequestProperty("Authorization", "Bearer $accessToken")
-            }
-
-            val code = conn.responseCode
+            val response = ActiveNetworkHttp.get(
+                url = urlStr,
+                headers = mapOf("Authorization" to "Bearer $accessToken"),
+                connectTimeoutMs = CONNECT_TIMEOUT_MS,
+                readTimeoutMs = READ_TIMEOUT_MS
+            )
+            val code = response.code
             if (code in 200..299) {
-                val body = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
+                val body = response.body
                 val json = JSONObject(body)
                 val items = json.optJSONArray("items")
                     ?: return@withContext TasksResult.Success(emptyList())
@@ -163,7 +158,7 @@ class GoogleTasksClient(
                 Log.d(TAG, "Fetched ${tasks.size} tasks from list $taskListId")
                 TasksResult.Success(tasks)
             } else {
-                val errorBody = BufferedReader(InputStreamReader(conn.errorStream ?: conn.inputStream, Charsets.UTF_8)).use { it.readText() }
+                val errorBody = response.body
                 Log.e(TAG, "Tasks HTTP $code: $errorBody")
                 TasksResult.Error("Tasks error ($code)")
             }
@@ -192,20 +187,19 @@ class GoogleTasksClient(
                 if (!dueDate.isNullOrBlank()) put("due", dueDate)
             }
 
-            val conn = (URL("$BASE_URL/lists/$taskListId/tasks").openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
-                setRequestProperty("Authorization", "Bearer $accessToken")
-                setRequestProperty("Content-Type", "application/json")
-                doOutput = true
-            }
-
-            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(taskJson.toString()) }
-
-            val code = conn.responseCode
+            val response = ActiveNetworkHttp.postJson(
+                url = "$BASE_URL/lists/$taskListId/tasks",
+                jsonBody = taskJson.toString(),
+                headers = mapOf(
+                    "Authorization" to "Bearer $accessToken",
+                    "Content-Type" to "application/json"
+                ),
+                connectTimeoutMs = CONNECT_TIMEOUT_MS,
+                readTimeoutMs = READ_TIMEOUT_MS
+            )
+            val code = response.code
             if (code in 200..299) {
-                val body = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use { it.readText() }
+                val body = response.body
                 val item = JSONObject(body)
                 val created = TaskItem(
                     id = item.optString("id", ""),
@@ -218,7 +212,7 @@ class GoogleTasksClient(
                 )
                 TasksResult.Success(listOf(created))
             } else {
-                val errorBody = BufferedReader(InputStreamReader(conn.errorStream ?: conn.inputStream, Charsets.UTF_8)).use { it.readText() }
+                val errorBody = response.body
                 Log.e(TAG, "Create task HTTP $code: $errorBody")
                 TasksResult.Error("Failed to create task ($code)")
             }
@@ -243,23 +237,22 @@ class GoogleTasksClient(
                 put("status", "completed")
             }
 
-            val conn = (URL("$BASE_URL/lists/$taskListId/tasks/$taskId").openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"   // PATCH via POST with override header
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
-                setRequestProperty("Authorization", "Bearer $accessToken")
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("X-HTTP-Method-Override", "PATCH")
-                doOutput = true
-            }
-
-            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(patchJson.toString()) }
-
-            val code = conn.responseCode
+            val response = ActiveNetworkHttp.postJson(
+                url = "$BASE_URL/lists/$taskListId/tasks/$taskId",
+                jsonBody = patchJson.toString(),
+                headers = mapOf(
+                    "Authorization" to "Bearer $accessToken",
+                    "Content-Type" to "application/json",
+                    "X-HTTP-Method-Override" to "PATCH"
+                ),
+                connectTimeoutMs = CONNECT_TIMEOUT_MS,
+                readTimeoutMs = READ_TIMEOUT_MS
+            )
+            val code = response.code
             if (code in 200..299) {
                 TasksResult.Success(emptyList())
             } else {
-                val errorBody = BufferedReader(InputStreamReader(conn.errorStream ?: conn.inputStream, Charsets.UTF_8)).use { it.readText() }
+                val errorBody = response.body
                 Log.e(TAG, "Complete task HTTP $code: $errorBody")
                 TasksResult.Error("Failed to complete task ($code)")
             }
@@ -288,4 +281,5 @@ class GoogleTasksClient(
         }
         return null
     }
+
 }

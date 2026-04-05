@@ -61,8 +61,50 @@
                     android:textColor="@color/text_primary"
                     android:textSize="14sp"
                     android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/hudAqiText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:text="AQI --"
+                    android:textColor="#CCFFFFFF"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
             </LinearLayout>
         </LinearLayout>
+
+        <!-- OpenClaw heartbeat: scrolling marquee under clock -->
+        <TextView
+            android:id="@+id/hudHeartbeatText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:background="@drawable/bg_heartbeat_bar"
+            android:drawablePadding="6dp"
+            android:ellipsize="marquee"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:marqueeRepeatLimit="marquee_forever"
+            android:maxLines="1"
+            android:paddingHorizontal="8dp"
+            android:paddingVertical="3dp"
+            android:singleLine="true"
+            android:textColor="#FFFF5252"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/hudRadioText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:textColor="#FF4DD0E1"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
 
         <!-- Connection status (green dot + G) below battery row -->
         <LinearLayout
@@ -152,7 +194,6 @@
         android:id="@+id/chatRecycler"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:translationX="70dp"
         android:layout_marginStart="14dp"
         android:layout_marginTop="0dp"
         android:layout_marginEnd="14dp"
@@ -240,16 +281,23 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
 
+    <androidx.constraintlayout.widget.Guideline
+        android:id="@+id/guideCamera20pct"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        app:layout_constraintGuide_percent="0.10" />
+
     <FrameLayout
         android:id="@+id/coreEyeContainer"
-        android:layout_width="120dp"
-        android:layout_height="120dp"
+        android:layout_width="100dp"
+        android:layout_height="100dp"
         android:background="@drawable/bg_core_eye_mask"
         android:clipToOutline="true"
         android:outlineProvider="background"
         app:layout_constraintBottom_toBottomOf="@id/chatInlineOscilloscope"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintStart_toStartOf="@id/guideCamera20pct"
+        app:layout_constraintEnd_toEndOf="@id/guideCamera20pct"
         app:layout_constraintTop_toTopOf="@id/chatInlineOscilloscope">
 
         <TextureView

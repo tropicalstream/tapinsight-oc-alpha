@@ -9,12 +9,14 @@ import android.view.Choreographer
 import android.view.View
 import kotlin.math.abs
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * Wireframe oscilloscope tuned for HUD use:
  * - low-luminance rendering
  * - 2px stroke
  * - vsync animation via Choreographer
+ * - waveform emanates outward from a circular camera cutout
  */
 class VoiceOscilloscopeView @JvmOverloads constructor(
     context: Context,
@@ -37,13 +39,15 @@ class VoiceOscilloscopeView @JvmOverloads constructor(
         strokeJoin = Paint.Join.ROUND
     }
 
-    private val wavePath = Path()
+    private val leftPath = Path()
+    private val rightPath = Path()
     private var targetLevel = 0f
     private var displayedLevel = 0f
     private var phase = 0f
     private var active = false
     private var framePosted = false
     private var centerCutoutRadiusPx = 0f
+    private var cutoutCenterFraction = 0.5f
 
     private val frameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
@@ -80,6 +84,12 @@ class VoiceOscilloscopeView @JvmOverloads constructor(
         invalidate()
     }
 
+    /** Set the horizontal position of the cutout center as a fraction of this view's width. */
+    fun setCutoutCenterFraction(fraction: Float) {
+        cutoutCenterFraction = fraction.coerceIn(0f, 1f)
+        invalidate()
+    }
+
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         postFrame()
@@ -99,39 +109,79 @@ class VoiceOscilloscopeView @JvmOverloads constructor(
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
 
-        val centerX = w / 2f
-        val centerY = h / 2f
-        val cutoutHalf = centerCutoutRadiusPx + strokePx * 1.2f
-        if (cutoutHalf > 0f) {
-            val leftEnd = (centerX - cutoutHalf).coerceAtLeast(0f)
-            val rightStart = (centerX + cutoutHalf).coerceAtMost(w)
-            canvas.drawLine(0f, centerY, leftEnd, centerY, axisPaint)
-            canvas.drawLine(rightStart, centerY, w, centerY, axisPaint)
+        val cx = w * cutoutCenterFraction
+        val cy = h / 2f
+        val cutR = centerCutoutRadiusPx + strokePx
+
+        // ── Axis line with gap around the circle ──
+        if (cutR > 0f) {
+            val leftEnd = (cx - cutR).coerceAtLeast(0f)
+            val rightStart = (cx + cutR).coerceAtMost(w)
+            canvas.drawLine(0f, cy, leftEnd, cy, axisPaint)
+            canvas.drawLine(rightStart, cy, w, cy, axisPaint)
         } else {
-            canvas.drawLine(0f, centerY, w, centerY, axisPaint)
+            canvas.drawLine(0f, cy, w, cy, axisPaint)
         }
 
+        // ── Wave amplitude ──
         val amplitude = (h * 0.10f) + (h * 0.34f * displayedLevel)
         val steps = 64
-        wavePath.reset()
-        var pathStarted = false
+
+        if (cutR <= 0f) {
+            // No cutout — single continuous wave
+            leftPath.reset()
+            for (i in 0..steps) {
+                val ratio = i / steps.toFloat()
+                val x = w * ratio
+                val y = cy + (sin(phase + ratio * Math.PI * 2.2).toFloat() * amplitude)
+                if (i == 0) leftPath.moveTo(x, y) else leftPath.lineTo(x, y)
+            }
+            canvas.drawPath(leftPath, wavePaint)
+            return
+        }
+
+        // ── Two wave segments that emanate FROM the circle edge ──
+
+        // LEFT segment: draw left-to-right so the path renders correctly,
+        // but only include points LEFT of the cutout circle.
+        leftPath.reset()
+        var started = false
         for (i in 0..steps) {
             val ratio = i / steps.toFloat()
             val x = w * ratio
-            val insideCutout = cutoutHalf > 0f && abs(x - centerX) <= cutoutHalf
-            if (insideCutout) {
-                pathStarted = false
-                continue
-            }
-            val y = centerY + (sin(phase + ratio * Math.PI * 2.2).toFloat() * amplitude)
-            if (!pathStarted) {
-                wavePath.moveTo(x, y)
-                pathStarted = true
+            if (x >= cx - cutR) break  // reached the cutout edge — stop
+            // Fade amplitude near the circle edge so wave "emerges" smoothly
+            val distFromEdge = (cx - cutR) - x
+            val edgeFade = (distFromEdge / (cutR * 0.8f)).coerceIn(0f, 1f)
+            val y = cy + (sin(phase + ratio * Math.PI * 2.2).toFloat() * amplitude * edgeFade)
+            if (!started) {
+                leftPath.moveTo(x, y)
+                started = true
             } else {
-                wavePath.lineTo(x, y)
+                leftPath.lineTo(x, y)
             }
         }
-        canvas.drawPath(wavePath, wavePaint)
+        canvas.drawPath(leftPath, wavePaint)
+
+        // RIGHT segment: starts at the circle boundary, flows right to edge
+        rightPath.reset()
+        started = false
+        for (i in 0..steps) {
+            val ratio = i / steps.toFloat()
+            val x = w * ratio
+            if (x <= cx + cutR) continue  // still inside or left of cutout
+            // Fade amplitude near the circle edge so wave "emerges" smoothly
+            val distFromEdge = x - (cx + cutR)
+            val edgeFade = (distFromEdge / (cutR * 0.8f)).coerceIn(0f, 1f)
+            val y = cy + (sin(phase + ratio * Math.PI * 2.2).toFloat() * amplitude * edgeFade)
+            if (!started) {
+                rightPath.moveTo(x, y)
+                started = true
+            } else {
+                rightPath.lineTo(x, y)
+            }
+        }
+        canvas.drawPath(rightPath, wavePaint)
     }
 
     private fun postFrame() {

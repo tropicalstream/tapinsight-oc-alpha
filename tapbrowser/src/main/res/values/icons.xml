@@ -19,6 +19,8 @@
     <string name="fa_link">&#xf0c1;</string>             <!-- Link -->
     <string name="fa_gear">&#xf013;</string>             <!-- Settings -->
     <string name="fa_rotate_right">&#xf2f9;</string>     <!-- Refresh -->
+    <string name="fa_rotate_left">&#xf2ea;</string>      <!-- Replay/Restart -->
+    <string name="fa_arrow_rotate_left">&#xf0e2;</string> <!-- Replay Circle Arrow -->
     <string name="fa_xmark">&#xf00d;</string>            <!-- Quit/Close -->
     <string name="fa_comment">&#xf075;</string>          <!-- Comment/Chat -->
     
@@ -42,4 +44,7 @@
     <string name="fa_forward_step">&#xf051;</string>     <!-- Next Track -->
     <string name="fa_backward">&#xf04a;</string>         <!-- 10s Back -->
     <string name="fa_forward">&#xf04e;</string>          <!-- 10s Forward -->
+    <string name="fa_wave_square">&#xf83e;</string>      <!-- Visualizer Toggle -->
+    <string name="fa_bars_staggered">&#xf550;</string>   <!-- Bars Staggered -->
+    <string name="fa_volume_high">&#xf028;</string>     <!-- Volume High / Speaker TTS -->
 </resources>

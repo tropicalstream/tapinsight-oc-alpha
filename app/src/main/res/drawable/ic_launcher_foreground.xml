@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Background circle -->
+    <path
+        android:fillColor="#1A1A2E"
+        android:pathData="M54,54m-48,0a48,48 0,1 1,96 0a48,48 0,1 1,-96 0" />
+
+    <!-- Einstein wild hair (iconic silhouette) -->
+    <path
+        android:fillColor="#CCCCCC"
+        android:pathData="M34,38 C30,30 28,24 32,18 C36,12 42,10 48,9 C54,8 60,9 66,12 C72,15 76,20 77,26 C78,32 76,36 74,38 C80,34 82,28 80,22 C78,14 72,8 64,6 C56,4 46,5 38,10 C30,15 26,24 28,32 C29,36 31,38 34,38Z" />
+
+    <!-- Head/face shape -->
+    <path
+        android:fillColor="#E8D5B7"
+        android:pathData="M38,40 C36,36 37,30 40,26 C43,22 48,20 54,20 C60,20 65,22 68,26 C71,30 72,36 70,40 L70,52 C70,58 66,62 60,64 L48,64 C42,62 38,58 38,52Z" />
+
+    <!-- AR Glasses frame — sleek tech glasses -->
+    <path
+        android:fillColor="#00E5FF"
+        android:strokeColor="#00BCD4"
+        android:strokeWidth="0.8"
+        android:pathData="M32,38 L42,36 L42,44 L32,44Z M66,36 L76,38 L76,44 L66,44Z M42,40 L66,40" />
+
+    <!-- AR glasses lens glow (left) -->
+    <path
+        android:fillColor="#00E5FF"
+        android:alpha="0.3"
+        android:pathData="M33,38.5 L41.5,36.5 L41.5,43.5 L33,43.5Z" />
+
+    <!-- AR glasses lens glow (right) -->
+    <path
+        android:fillColor="#00E5FF"
+        android:alpha="0.3"
+        android:pathData="M66.5,36.5 L75.5,38.5 L75.5,43.5 L66.5,43.5Z" />
+
+    <!-- Mustache (Einstein's iconic feature) -->
+    <path
+        android:fillColor="#999999"
+        android:pathData="M46,52 C48,54 50,55 54,55 C58,55 60,54 62,52 C60,56 56,58 54,58 C52,58 48,56 46,52Z" />
+
+    <!-- Eyes behind glasses -->
+    <path
+        android:fillColor="#333333"
+        android:pathData="M37,40 A1.5,1.5 0,1 1,40,40 A1.5,1.5 0,1 1,37,40Z M68,40 A1.5,1.5 0,1 1,71,40 A1.5,1.5 0,1 1,68,40Z" />
+
+    <!-- Nose -->
+    <path
+        android:fillColor="#D4B896"
+        android:pathData="M52,44 L54,50 L56,44" />
+
+    <!-- Tech circuit accent lines -->
+    <path
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="0.6"
+        android:fillColor="#00000000"
+        android:alpha="0.5"
+        android:pathData="M20,70 L30,70 L30,75 M78,70 L88,70 L88,75 M24,80 L24,86 L34,86 M74,80 L84,80 L84,86" />
+
+    <!-- "TR" monogram at bottom -->
+    <path
+        android:fillColor="#00E5FF"
+        android:alpha="0.7"
+        android:pathData="M42,76 L42,86 M38,76 L46,76 M50,76 L50,86 L56,76 L56,86 M56,81 L52,81" />
+
+    <!-- Subtle glow ring -->
+    <path
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="1.2"
+        android:fillColor="#00000000"
+        android:alpha="0.15"
+        android:pathData="M54,54m-50,0a50,50 0,1 1,100 0a50,50 0,1 1,-100 0" />
+</vector>

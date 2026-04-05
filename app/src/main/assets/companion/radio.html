@@ -41,6 +41,8 @@ h1{color:#00e5ff;font-size:22px;margin-bottom:2px}
 .station-item .genre-badge{font-size:10px;background:rgba(0,229,255,.1);color:#00e5ff;padding:2px 8px;border-radius:10px;flex-shrink:0}
 .station-item .actions{display:flex;gap:4px;flex-shrink:0}
 .station-item .actions button{padding:4px 8px;font-size:11px;background:#111;border:1px solid #333;border-radius:4px;color:#aaa;cursor:pointer}
+.station-item .actions button.play-btn{border-color:#00e5ff;color:#00e5ff}
+.station-item .actions button.play-btn:hover{background:#00bcd4;color:#001014;border-color:#00bcd4}
 .station-item .actions button:hover{background:#333;color:#fff}
 .station-item .actions button.del:hover{background:#e53935;color:#fff;border-color:#e53935}
 
@@ -77,8 +79,12 @@ h1{color:#00e5ff;font-size:22px;margin-bottom:2px}
 .search-result .sr-meta{font-size:10px;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 .search-result .sr-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:3px}
 .search-result .sr-tag{font-size:9px;background:rgba(124,77,255,.15);color:#b388ff;padding:1px 6px;border-radius:8px}
-.search-result .sr-add{padding:5px 12px;font-size:11px;font-weight:600;background:#7c4dff;color:#fff;border:none;border-radius:5px;cursor:pointer;flex-shrink:0;transition:background .15s}
+.search-result .sr-actions{display:flex;gap:6px;align-items:center;flex-shrink:0}
+.search-result .sr-add,.search-result .sr-play{padding:5px 12px;font-size:11px;font-weight:600;border:none;border-radius:5px;cursor:pointer;flex-shrink:0;transition:background .15s}
+.search-result .sr-add{background:#7c4dff;color:#fff}
+.search-result .sr-play{background:#00bcd4;color:#02161a}
 .search-result .sr-add:hover{background:#651fff}
+.search-result .sr-play:hover{background:#22d6ea}
 .search-result .sr-add.added{background:#1b5e20;cursor:default}
 .search-spinner{text-align:center;padding:16px;color:#666;font-size:12px}
 .search-empty{text-align:center;padding:16px;color:#555;font-size:12px}
@@ -94,6 +100,7 @@ h1{color:#00e5ff;font-size:22px;margin-bottom:2px}
   <a href="/browser">Browser</a>
   <a href="/dashboard">Dashboard</a>
   <a href="/radio" class="active">TapRadio</a>
+  <a href="/openclaw">OpenClaw</a>
 </div>
 
 <div id="statusBar" class="status"></div>
@@ -137,11 +144,9 @@ h1{color:#00e5ff;font-size:22px;margin-bottom:2px}
     <div class="field"><label>Station Name</label><input id="fName" placeholder="SomaFM Groove Salad"></div>
     <div class="field"><label>Stream URL</label><input id="fUrl" placeholder="https://ice1.somafm.com/groovesalad-256-mp3"></div>
     <div class="field"><label>Genre</label>
-      <select id="fGenreSelect" onchange="onGenreSelectChange()" style="width:100%;padding:10px;background:#111;border:1px solid #333;border-radius:6px;color:#fff;font-size:14px">
+      <select id="fGenreSelect" style="width:100%;padding:10px;background:#111;border:1px solid #333;border-radius:6px;color:#fff;font-size:14px">
         <option value="">— Select genre —</option>
-        <option value="__new__">+ Add new genre...</option>
       </select>
-      <input id="fGenre" placeholder="Enter new genre name" style="display:none;margin-top:6px">
     </div>
     <div class="field"><label>Description</label><input id="fDesc" placeholder="Ambient/downtempo for your day"></div>
     <div class="modal-btns">
@@ -163,6 +168,36 @@ const RADIO_BROWSER_SERVERS = [
   'https://at1.api.radio-browser.info'
 ];
 let rbServer = RADIO_BROWSER_SERVERS[0];
+
+const GENRE_BUCKETS = [
+  { name: 'Ambient', match: /(ambient|drone|space|meditation)/i },
+  { name: 'Chill', match: /(chill|mellow|downtempo|lush|lofi)/i },
+  { name: 'Electronic', match: /(electronic|techno|house|future soul|hip-hop|beats|beat|fluid|blend|dance|synth)/i },
+  { name: 'Rock', match: /(rock|indie|pop|punk|wave|alt|metal)/i },
+  { name: 'Jazz', match: /(jazz|lounge|bossa|spy-fi|swing|blues)/i },
+  { name: 'Classical', match: /(classical|orchestra|opera|symphony)/i },
+  { name: 'News', match: /(news|npr|bbc|program|talk|public radio)/i },
+  { name: 'Mix', match: /(eclectic|folk|roots|world|americana|celtic|country|latin|reggae|variety|mix)/i }
+];
+
+function normalizeGenre(genre) {
+  const raw = String(genre || '').trim();
+  if (!raw) return 'Mix';
+  const bucket = GENRE_BUCKETS.find(entry => entry.match.test(raw));
+  return bucket ? bucket.name : 'Mix';
+}
+
+function sanitizeStation(station) {
+  return {
+    ...station,
+    genre: normalizeGenre(station && station.genre),
+    fav: !!(station && station.fav)
+  };
+}
+
+function sanitizeStations(list) {
+  return Array.isArray(list) ? list.map(sanitizeStation) : [];
+}
 
 const DEFAULT_STATIONS = [
   { name: 'SomaFM Groove Salad', url: 'https://ice1.somafm.com/groovesalad-256-mp3', genre: 'Chill', desc: 'Ambient/downtempo for your day', fav: true },
@@ -192,16 +227,17 @@ async function init() {
     if (r.ok) {
       const data = await r.json();
       if (Array.isArray(data) && data.length) {
-        stations = data.map(s => ({ ...s, fav: !!s.fav }));
+        stations = sanitizeStations(data);
       } else {
-        stations = DEFAULT_STATIONS.map(s => ({...s}));
+        stations = sanitizeStations(DEFAULT_STATIONS);
       }
     } else {
-      stations = DEFAULT_STATIONS.map(s => ({...s}));
+      stations = sanitizeStations(DEFAULT_STATIONS);
     }
   } catch(e) {
-    stations = DEFAULT_STATIONS.map(s => ({...s}));
+    stations = sanitizeStations(DEFAULT_STATIONS);
   }
+  stations = sanitizeStations(stations);
   populateGenreFilter();
   renderList();
   showStatus('Loaded ' + stations.length + ' stations.', 'info');
@@ -210,11 +246,12 @@ async function init() {
 function populateGenreFilter() {
   const sel = document.getElementById('genreFilter');
   const genres = new Set();
-  stations.forEach(s => { if (s.genre) genres.add(s.genre); });
+  stations.forEach(s => { genres.add(normalizeGenre(s.genre)); });
   while (sel.options.length > 2) sel.remove(2);
-  Array.from(genres).sort().forEach(g => {
+  GENRE_BUCKETS.map(entry => entry.name).filter(name => genres.has(name)).forEach(name => {
     const opt = document.createElement('option');
-    opt.value = g; opt.textContent = g;
+    opt.value = name;
+    opt.textContent = name;
     sel.appendChild(opt);
   });
 }
@@ -225,7 +262,7 @@ function renderList() {
   const list = document.getElementById('stationList');
   let filtered = stations;
   if (filter === 'favorites') filtered = stations.filter(s => s.fav);
-  else if (filter !== 'all') filtered = stations.filter(s => s.genre === filter);
+  else if (filter !== 'all') filtered = stations.filter(s => normalizeGenre(s.genre) === filter);
 
   document.getElementById('stationCount').textContent = filtered.length + ' of ' + stations.length + ' stations';
 
@@ -243,8 +280,9 @@ function renderList() {
         <div class="name">${esc(s.name)}</div>
         <div class="meta">${esc(s.url)}</div>
       </div>
-      ${s.genre ? '<span class="genre-badge">' + esc(s.genre) + '</span>' : ''}
+      <span class="genre-badge">${esc(normalizeGenre(s.genre))}</span>
       <div class="actions">
+        <button class="play-btn" onclick="previewSavedStation(${idx})">Play</button>
         <button onclick="openEditModal(${idx})">Edit</button>
         <button class="del" onclick="deleteStation(${idx})">Del</button>
       </div>
@@ -264,57 +302,55 @@ function deleteStation(idx) {
   renderList();
 }
 
-// ── Modal ─────────────────────────────────────────────────────────
-function populateGenreSelect(selectedGenre) {
-  const sel = document.getElementById('fGenreSelect');
-  const inp = document.getElementById('fGenre');
-  // Gather all unique genres from stations + defaults
-  const genres = new Set();
-  stations.forEach(s => { if (s.genre) genres.add(s.genre); });
-  DEFAULT_STATIONS.forEach(s => { if (s.genre) genres.add(s.genre); });
-  // Reset: keep first two options (placeholder + Add new)
-  while (sel.options.length > 2) sel.remove(2);
-  Array.from(genres).sort().forEach(g => {
-    const opt = document.createElement('option');
-    opt.value = g; opt.textContent = g;
-    sel.appendChild(opt);
-  });
-  // Set selection
-  if (selectedGenre && genres.has(selectedGenre)) {
-    sel.value = selectedGenre;
-    inp.style.display = 'none';
-    inp.value = '';
-  } else if (selectedGenre) {
-    // Genre not in list — show as custom
-    sel.value = '__new__';
-    inp.style.display = 'block';
-    inp.value = selectedGenre;
-  } else {
-    sel.value = '';
-    inp.style.display = 'none';
-    inp.value = '';
+function previewStream(url, label) {
+  const streamUrl = String(url || '').trim();
+  if (!streamUrl) {
+    showStatus('No stream URL available for preview.', 'err');
+    return;
+  }
+  try {
+    const win = window.open(streamUrl, '_blank', 'noopener');
+    if (!win) {
+      showStatus('Popup blocked. Allow popups to preview station streams.', 'err');
+      return;
+    }
+    showStatus('Opened preview for "' + (label || 'station') + '" in a new tab.', 'info');
+  } catch (e) {
+    showStatus('Preview failed: ' + e.message, 'err');
   }
 }
 
-function onGenreSelectChange() {
+function previewSavedStation(idx) {
+  const station = stations[idx];
+  if (!station) return;
+  previewStream(station.url, station.name);
+}
+
+function previewSearchResult(idx) {
+  const container = document.getElementById('searchResults');
+  const results = container._results;
+  const station = results && results[idx];
+  if (!station) return;
+  previewStream((station.url_resolved || station.url || '').trim(), station.name || 'station');
+}
+
+// ── Modal ─────────────────────────────────────────────────────────
+function populateGenreSelect(selectedGenre) {
   const sel = document.getElementById('fGenreSelect');
-  const inp = document.getElementById('fGenre');
-  if (sel.value === '__new__') {
-    inp.style.display = 'block';
-    inp.value = '';
-    inp.focus();
-  } else {
-    inp.style.display = 'none';
-    inp.value = '';
-  }
+  while (sel.options.length > 1) sel.remove(1);
+  GENRE_BUCKETS.forEach(({ name }) => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  });
+  sel.value = selectedGenre ? normalizeGenre(selectedGenre) : '';
 }
 
 function getSelectedGenre() {
   const sel = document.getElementById('fGenreSelect');
-  const inp = document.getElementById('fGenre');
-  if (sel.value === '__new__') return inp.value.trim();
   if (sel.value === '') return '';
-  return sel.value;
+  return normalizeGenre(sel.value);
 }
 
 function openAddModal() {
@@ -348,9 +384,9 @@ function saveModal() {
   const desc = document.getElementById('fDesc').value.trim();
   if (!name || !url) { alert('Name and URL are required.'); return; }
   if (editIdx >= 0) {
-    stations[editIdx] = { ...stations[editIdx], name, url, genre, desc };
+    stations[editIdx] = sanitizeStation({ ...stations[editIdx], name, url, genre, desc });
   } else {
-    stations.push({ name, url, genre, desc, fav: false });
+    stations.push(sanitizeStation({ name, url, genre, desc, fav: false }));
   }
   populateGenreFilter();
   renderList();
@@ -474,8 +510,11 @@ function renderSearchResults(data) {
         <div class="sr-meta">${esc(metaParts.join(' · '))}</div>
         ${tags.length ? '<div class="sr-tags">' + tags.map(t => '<span class="sr-tag">' + esc(t) + '</span>').join('') + '</div>' : ''}
       </div>
-      <button class="sr-add${alreadyAdded ? ' added' : ''}" onclick="addFromSearch(this, ${i})"
-        ${alreadyAdded ? 'disabled' : ''}>${alreadyAdded ? '&#10003; Added' : '+ Add'}</button>
+      <div class="sr-actions">
+        <button class="sr-play" onclick="previewSearchResult(${i})">Play</button>
+        <button class="sr-add${alreadyAdded ? ' added' : ''}" onclick="addFromSearch(this, ${i})"
+          ${alreadyAdded ? 'disabled' : ''}>${alreadyAdded ? '&#10003; Added' : '+ Add'}</button>
+      </div>
     </div>`;
   }).join('');
 
@@ -492,7 +531,7 @@ function addFromSearch(btn, idx) {
   const streamUrl = (s.url_resolved || s.url || '').trim();
   const name = s.name || 'Unknown';
   const tags = (s.tags || '').split(',').map(t => t.trim()).filter(Boolean);
-  const genre = capitalizeFirst(tags[0] || guessGenre(name, tags));
+  const genre = normalizeGenre(tags[0] || guessGenre(name, tags));
   const country = s.country || '';
   const codec = s.codec || '';
   const bitrate = s.bitrate || 0;
@@ -511,7 +550,7 @@ function addFromSearch(btn, idx) {
     return;
   }
 
-  stations.push({ name, url: streamUrl, genre, desc, fav: false });
+  stations.push(sanitizeStation({ name, url: streamUrl, genre, desc, fav: false }));
   populateGenreFilter();
   renderList();
 
@@ -523,17 +562,14 @@ function addFromSearch(btn, idx) {
 
 function guessGenre(name, tags) {
   const all = (name + ' ' + tags.join(' ')).toLowerCase();
-  if (all.includes('jazz')) return 'Jazz';
-  if (all.includes('classical') || all.includes('symphony')) return 'Classical';
-  if (all.includes('rock') || all.includes('metal')) return 'Rock';
-  if (all.includes('electronic') || all.includes('techno') || all.includes('house')) return 'Electronic';
-  if (all.includes('chill') || all.includes('lofi') || all.includes('ambient')) return 'Chill';
-  if (all.includes('news') || all.includes('talk') || all.includes('npr')) return 'News';
-  if (all.includes('folk') || all.includes('country') || all.includes('bluegrass')) return 'Folk';
-  if (all.includes('hip') || all.includes('rap') || all.includes('r&b')) return 'Hip-Hop';
-  if (all.includes('pop')) return 'Pop';
-  if (all.includes('latin') || all.includes('salsa') || all.includes('reggaeton')) return 'Latin';
-  return 'Other';
+  if (all.includes('jazz') || all.includes('blues')) return 'Jazz';
+  if (all.includes('classical') || all.includes('symphony') || all.includes('orchestra')) return 'Classical';
+  if (all.includes('rock') || all.includes('metal') || all.includes('punk') || all.includes('indie') || all.includes('pop')) return 'Rock';
+  if (all.includes('electronic') || all.includes('techno') || all.includes('house') || all.includes('dance') || all.includes('synth') || all.includes('hip hop') || all.includes('hip-hop') || all.includes('rap')) return 'Electronic';
+  if (all.includes('chill') || all.includes('lofi') || all.includes('ambient') || all.includes('mellow')) return 'Chill';
+  if (all.includes('news') || all.includes('talk') || all.includes('npr') || all.includes('bbc')) return 'News';
+  if (all.includes('drone') || all.includes('meditation') || all.includes('space')) return 'Ambient';
+  return 'Mix';
 }
 
 function capitalizeFirst(s) {
@@ -547,7 +583,7 @@ async function saveToGlasses() {
     const r = await fetch('/api/radio', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(stations)
+      body: JSON.stringify(sanitizeStations(stations))
     });
     if (r.ok) {
       showStatus('Saved ' + stations.length + ' stations to glasses!', 'ok');
@@ -561,7 +597,7 @@ async function saveToGlasses() {
 
 function resetDefaults() {
   if (!confirm('Reset all stations to defaults? Your custom stations will be lost.')) return;
-  stations = DEFAULT_STATIONS.map(s => ({...s}));
+  stations = sanitizeStations(DEFAULT_STATIONS);
   populateGenreFilter();
   renderList();
   showStatus('Reset to defaults. Click "Save to Glasses" to apply.', 'info');
