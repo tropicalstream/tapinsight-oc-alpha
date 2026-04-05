@@ -1,6 +1,10 @@
 # TapInsight — AI-Powered AR Companion for RayNeo X3 Pro
 
 > **ALPHA SOFTWARE — Use at your own risk.** This project is under active development. Features may be incomplete, unstable, or change without notice. No warranty is provided.
+>
+> **Private Alpha Download:** [Download `tapinsight-oc-alpha.apk`](https://github.com/tropicalstream/tapinsight-oc-alpha/releases/download/tapinsight-oc-alpha/tapinsight-oc-alpha.apk)
+>
+> **OpenClaw Security Warning:** [Read before enabling TapClaw / OpenClaw remote access](OPENCLAW_SECURITY_WARNING.md)
 
 TapInsight transforms your RayNeo X3 Pro AR glasses into an AI-powered smart assistant with voice and vision capabilities, hands-free navigation, internet radio, and a full web browser — all controlled by simple gestures.
 
@@ -71,7 +75,9 @@ There are also diagnostic tools: Test Location (verify GPS) and Test Traffic (ve
 
 ## Download
 
-**[`TapInsight.apk`](TapInsight.apk)** — Pre-built debug APK, ready to sideload onto your RayNeo X3 Pro via ADB. No Android Studio required.
+- **[Download `tapinsight-oc-alpha.apk`](https://github.com/tropicalstream/tapinsight-oc-alpha/releases/download/tapinsight-oc-alpha/tapinsight-oc-alpha.apk)** — Private alpha APK from the latest release
+- **[Release page](https://github.com/tropicalstream/tapinsight-oc-alpha/releases/tag/tapinsight-oc-alpha)** — APK plus source tarball
+- **[OpenClaw security warning](OPENCLAW_SECURITY_WARNING.md)** — Read this before exposing TapClaw/OpenClaw beyond your local network
 
 ---
 
